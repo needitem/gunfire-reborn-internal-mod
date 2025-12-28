@@ -1,0 +1,15 @@
+# Build
+build/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Batch files
+*.bat
+
+# OS
+.DS_Store
+Thumbs.db
