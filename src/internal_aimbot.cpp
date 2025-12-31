@@ -159,10 +159,12 @@ bool g_NoRecoil = true;
 bool g_NoSpread = true;
 bool g_FastBullet = true;
 bool g_FOVEnabled = false;  // FOV hack - OFF by default
+bool g_BigRadius = false;   // Big explosion radius - OFF by default
 float g_CustomFOV = 120.0f;  // Custom FOV value
 float g_OriginalFOV = 0.0f;  // Store original FOV
 float g_BulletSpeedMultiplier = 100.0f;
 float g_SkillSpeedMultiplier = 10.0f;  // Skill projectile speed multiplier
+float g_RadiusValue = 999.0f;  // Explosion radius value
 int g_OriginalSpeed = 0;
 int g_BoostedSpeed = 1000;
 float g_OriginalJumpHeight = 0.0f;
@@ -655,9 +657,12 @@ void HookedEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* shows
 
     // Fast bullet
     float finalSpeed = g_FastBullet ? speed * g_BulletSpeedMultiplier : speed;
+    
+    // Big radius
+    float finalRadius = g_BigRadius ? g_RadiusValue : radius;
 
     g_OriginalEnableCtrl(thisPtr, skill, start, showstart, end, pierce, distance, finalSpeed,
-        targettype, effect, liveTime, trailEffect, effectLiveTime, radius, flyoverdis, passid, extCheck);
+        targettype, effect, liveTime, trailEffect, effectLiveTime, finalRadius, flyoverdis, passid, extCheck);
 }
 
 // Hooked Enable - uses cached target, no IL2CPP calls
@@ -683,9 +688,12 @@ void HookedEnable(void* thisPtr, void* skill, Vector3* start, Vector3* checkstar
 
     // Fast bullet
     float finalSpeed = g_FastBullet ? speed * g_BulletSpeedMultiplier : speed;
+    
+    // Big radius
+    float finalRadius = g_BigRadius ? g_RadiusValue : radius;
 
     g_OriginalEnable(thisPtr, skill, start, checkstart, end, pierce, distance, finalSpeed,
-        targettype, effect, liveTime, traileffect, effectlivetime, radius, flyoverdis);
+        targettype, effect, liveTime, traileffect, effectlivetime, finalRadius, flyoverdis);
 }
 
 // Hooked ThrowByPowerCartoon.EnableCtrl - for skill aimbot (grenade, etc.)
@@ -976,6 +984,7 @@ void MainThread(HMODULE hModule) {
     printf("  F6 = Fast Bullet (%s)\n", g_FastBullet ? "ON" : "OFF");
     printf("  F7 = Skill Aim (%s)\n", g_SkillAimEnabled ? "ON" : "OFF");
     printf("  F8 = FOV Hack (%s, %.0f)\n", g_FOVEnabled ? "ON" : "OFF", g_CustomFOV);
+    printf("  F9 = Big Radius (%s, %.0f)\n", g_BigRadius ? "ON" : "OFF", g_RadiusValue);
     printf("  Mouse Wheel = Auto Pickup\n");
     printf("  END = Exit\n");
 
@@ -1045,6 +1054,11 @@ void MainThread(HMODULE hModule) {
         if (GetAsyncKeyState(VK_F8) & 1) {
             g_FOVEnabled = !g_FOVEnabled;
             printf("[GFR Mod] FOV Hack: %s (%.0f)\n", g_FOVEnabled ? "ON" : "OFF", g_CustomFOV);
+        }
+
+        if (GetAsyncKeyState(VK_F9) & 1) {
+            g_BigRadius = !g_BigRadius;
+            printf("[GFR Mod] Big Radius: %s (%.0f)\n", g_BigRadius ? "ON" : "OFF", g_RadiusValue);
         }
 
         if (GetAsyncKeyState(VK_MBUTTON) & 1) {
