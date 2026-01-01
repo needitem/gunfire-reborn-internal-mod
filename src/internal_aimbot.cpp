@@ -131,6 +131,7 @@ const DWORD RVA_CAMERA_SET_FOV = 0x025d22c0;
 // Camera matrix RVAs (for ESP world-to-screen) - CORRECTED
 const DWORD RVA_CAMERA_WORLDTOCAMERAMATRIX = 0x025d1d70;  // get_worldToCameraMatrix_Injected
 const DWORD RVA_CAMERA_PROJECTIONMATRIX = 0x025d1860;     // get_projectionMatrix_Injected
+const DWORD RVA_GET_MAINCAMERACOM_DIRECT = 0x00d92a00;    // CameraManager.get_MainCameraCom (direct call)
 
 // Transform position functions
 typedef void (*GetPositionInjected_t)(void* transform, Vector3* ret);
@@ -172,6 +173,10 @@ typedef void (*GetMatrix_t)(void* camera, Matrix4x4* ret);
 GetMatrix_t g_GetWorldToCameraMatrix = nullptr;
 GetMatrix_t g_GetProjectionMatrix = nullptr;
 
+// Direct camera getter (not through il2cpp_runtime_invoke)
+typedef void* (*GetMainCameraComDirect_t)();
+GetMainCameraComDirect_t g_GetMainCameraComDirect = nullptr;
+
 // Settings
 bool g_Running = true;
 bool g_SilentAimEnabled = true;
@@ -184,6 +189,7 @@ bool g_FastBullet = true;
 bool g_FOVEnabled = false;  // FOV hack - OFF by default
 bool g_BigRadius = false;   // Big explosion radius - OFF by default
 bool g_ESPEnabled = false;  // ESP - OFF by default, toggle with ALT hold
+bool g_MenuVisible = false; // ImGui menu visibility - toggle with HOME
 float g_CustomFOV = 120.0f;  // Custom FOV value
 float g_OriginalFOV = 0.0f;  // Store original FOV
 float g_BulletSpeedMultiplier = 100.0f;
@@ -286,7 +292,7 @@ Il2CppImage* FindImage(const char* name) {
 // Forward declarations
 Il2CppObject* GetLocalPlayer();
 
-// World to Screen conversion
+// World to Screen conversion (Unity column-major matrix)
 bool WorldToScreen(const Vector3& worldPos, Vector3& screenPos, int screenWidth, int screenHeight) {
     AcquireSRWLockShared(&g_MatrixLock);
     if (!g_ViewMatrixValid) {
@@ -296,23 +302,29 @@ bool WorldToScreen(const Vector3& worldPos, Vector3& screenPos, int screenWidth,
     
     float* m = g_ViewMatrix;
     
-    // Calculate clip coordinates
+    // Unity uses column-major matrices, so access pattern is m[col*4 + row]
+    // clipX = dot(row0, pos) = m[0]*x + m[4]*y + m[8]*z + m[12]
+    // clipY = dot(row1, pos) = m[1]*x + m[5]*y + m[9]*z + m[13]
+    // clipZ = dot(row2, pos) = m[2]*x + m[6]*y + m[10]*z + m[14]
+    // clipW = dot(row3, pos) = m[3]*x + m[7]*y + m[11]*z + m[15]
+    
     float clipX = worldPos.x * m[0] + worldPos.y * m[4] + worldPos.z * m[8] + m[12];
     float clipY = worldPos.x * m[1] + worldPos.y * m[5] + worldPos.z * m[9] + m[13];
     float clipW = worldPos.x * m[3] + worldPos.y * m[7] + worldPos.z * m[11] + m[15];
     
     ReleaseSRWLockShared(&g_MatrixLock);
     
-    if (clipW < 0.1f) return false;  // Behind camera
+    // Behind camera check
+    if (clipW < 0.1f) return false;
     
-    // Perspective divide
+    // Perspective divide to NDC
     float ndcX = clipX / clipW;
     float ndcY = clipY / clipW;
     
-    // Convert to screen coordinates
-    screenPos.x = (screenWidth / 2.0f) * (1.0f + ndcX);
-    screenPos.y = (screenHeight / 2.0f) * (1.0f - ndcY);
-    screenPos.z = clipW;  // Store depth
+    // Convert NDC (-1 to 1) to screen coordinates
+    screenPos.x = (screenWidth * 0.5f) * (1.0f + ndcX);
+    screenPos.y = (screenHeight * 0.5f) * (1.0f - ndcY);  // Y is flipped
+    screenPos.z = clipW;
     
     return true;
 }
@@ -332,14 +344,15 @@ void MultiplyMatrix(const float* a, const float* b, float* result) {
 
 // Update view-projection matrix from camera
 void UpdateViewMatrix() {
-    if (!g_GetMainCameraCom || !g_GetWorldToCameraMatrix || !g_GetProjectionMatrix) {
+    if (!g_GetMainCameraComDirect || !g_GetWorldToCameraMatrix || !g_GetProjectionMatrix) {
         AcquireSRWLockExclusive(&g_MatrixLock);
         g_ViewMatrixValid = false;
         ReleaseSRWLockExclusive(&g_MatrixLock);
         return;
     }
     
-    auto camera = il2cpp_runtime_invoke(g_GetMainCameraCom, nullptr, nullptr, nullptr);
+    // Use direct RVA call instead of il2cpp_runtime_invoke
+    void* camera = g_GetMainCameraComDirect();
     if (!camera) {
         AcquireSRWLockExclusive(&g_MatrixLock);
         g_ViewMatrixValid = false;
@@ -360,9 +373,9 @@ void UpdateViewMatrix() {
         return;
     }
     
-    // Multiply view * projection
+    // Multiply view * projection (Unity style)
     float vpMatrix[16];
-    MultiplyMatrix(projMatrix.m, viewMatrix.m, vpMatrix);
+    MultiplyMatrix(viewMatrix.m, projMatrix.m, vpMatrix);
     
     AcquireSRWLockExclusive(&g_MatrixLock);
     memcpy(g_ViewMatrix, vpMatrix, sizeof(g_ViewMatrix));
@@ -370,72 +383,148 @@ void UpdateViewMatrix() {
     ReleaseSRWLockExclusive(&g_MatrixLock);
 }
 
-// Update ESP objects list
+// Debug counter
+static DWORD g_LastESPUpdateLog = 0;
+
+// FightType values for secret rooms and treasure
+const int FIGHTTYPE_OBSTACLE_NORMAL = 268435713;  // Secret room wall (check SID=1015)
+const int FIGHTTYPE_NPC_TRANSFER = 33554434;      // Portal
+const int FIGHTTYPE_NPC_TREASUREBOX = 33554448;   // Treasure box
+const int FIGHTTYPE_NPC_EVENT = 33554441;         // Event box (treasure)
+const int SID_SECRET_WALL = 1015;   // SID for secret room wall (stage 1)
+const int SID_SECRET_WALL_2 = 1016; // SID for secret room wall (stage 2)
+const int SID_SECRET_WALL_3 = 1026; // SID for secret room wall (stage 3)
+const int SID_SECRET_PORTAL = 1017; // SID for secret room portal (stage 1)
+const int SID_SECRET_PORTAL_2 = 1019; // SID for secret room portal (stage 2)
+
+// Offset for SID in NewPlayerObject
+const size_t OFFSET_SID = 0x24;
+
+// Offset for FightType in NewPlayerObject
+const size_t OFFSET_FIGHTTYPE = 0x7c;
+
+// Check if FightType is a secret room (not used anymore, using SID instead)
+bool IsPortal(int fightType) {
+    return false;
+}
+
+// Not used for now
+bool IsBox(int fightType) {
+    return false;
+}
+
+// ESP object type enum
+enum ESPType {
+    ESP_PORTAL = 0,
+    ESP_BOX = 1
+};
+
+// Update ESP objects list - shows secret rooms only
 void UpdateESPObjects() {
-    if (!g_GetMonsters || !g_GetWeakTrans || !g_GetPosition) return;
-    
-    std::vector<ESPObject> newObjects;
-    
-    // Get player position first
-    auto localPlayer = GetLocalPlayer();
-    Vector3 playerPos = {0, 0, 0};
-    if (localPlayer) {
-        auto playerTrans = *(Il2CppObject**)((char*)localPlayer + OFFSET_GAMETRANS);
-        if (playerTrans && g_GetPositionInjected) {
-            g_GetPositionInjected(playerTrans, &playerPos);
-        }
+    if (!g_PlayerDictField || !g_MainCtrlField || !g_GetPositionInjected) {
+        return;
     }
     
-    auto monsters = il2cpp_runtime_invoke(g_GetMonsters, nullptr, nullptr, nullptr);
-    if (!monsters) {
+    // Get MainCtrl (local player ID)
+    int mainCtrl = 0;
+    il2cpp_field_static_get_value(g_MainCtrlField, &mainCtrl);
+    if (mainCtrl == 0) {
         AcquireSRWLockExclusive(&g_ESPLock);
         g_ESPObjects.clear();
         ReleaseSRWLockExclusive(&g_ESPLock);
         return;
     }
     
-    if (!g_ListGetCount || !g_ListGetItem) {
-        auto listClass = *(Il2CppClass**)monsters;
-        g_ListGetCount = il2cpp_class_get_method_from_name(listClass, "get_Count", 0);
-        g_ListGetItem = il2cpp_class_get_method_from_name(listClass, "get_Item", 1);
+    // Get PlayerDict
+    Il2CppObject* playerDict = nullptr;
+    il2cpp_field_static_get_value(g_PlayerDictField, &playerDict);
+    if (!playerDict) {
+        AcquireSRWLockExclusive(&g_ESPLock);
+        g_ESPObjects.clear();
+        ReleaseSRWLockExclusive(&g_ESPLock);
+        return;
     }
-    if (!g_ListGetCount || !g_ListGetItem) return;
     
-    auto countObj = il2cpp_runtime_invoke(g_ListGetCount, monsters, nullptr, nullptr);
-    if (!countObj) return;
-    int count = *(int*)il2cpp_object_unbox(countObj);
+    // Dictionary structure: entries at 0x18, count at 0x20
+    auto entries = *(Il2CppObject**)((char*)playerDict + 0x18);
+    int dictCount = *(int*)((char*)playerDict + 0x20);
+    if (!entries || dictCount <= 0 || dictCount > 500) {
+        AcquireSRWLockExclusive(&g_ESPLock);
+        g_ESPObjects.clear();
+        ReleaseSRWLockExclusive(&g_ESPLock);
+        return;
+    }
     
-    if (count > 50) count = 50;  // Limit for performance
+    std::vector<ESPObject> newObjects;
     
-    for (int i = 0; i < count; i++) {
-        void* args[] = { &i };
-        auto monster = il2cpp_runtime_invoke(g_ListGetItem, monsters, args, nullptr);
-        if (!monster) continue;
+    // Get player position first
+    Vector3 playerPos = {0, 0, 0};
+    for (int i = 0; i < dictCount + 50 && i < 500; i++) {
+        char* entryBase = (char*)entries + 0x20 + i * 24;
+        int hashCode = *(int*)entryBase;
+        if (hashCode < 0) continue;
         
-        auto bodyPartCom = *(Il2CppObject**)((char*)monster + OFFSET_BODYPARTCOM);
-        if (!bodyPartCom) continue;
+        int key = *(int*)(entryBase + 0x8);
+        if (key != mainCtrl) continue;
         
-        bool findNearest = true;
-        void* weakArgs[] = { &findNearest };
-        auto weakTrans = il2cpp_runtime_invoke(g_GetWeakTrans, bodyPartCom, weakArgs, nullptr);
-        if (!weakTrans) continue;
+        auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
+        if (!playerObj) continue;
         
-        auto posObj = il2cpp_runtime_invoke(g_GetPosition, weakTrans, nullptr, nullptr);
-        if (!posObj) continue;
+        auto playerTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
+        if (playerTrans) {
+            g_GetPositionInjected(playerTrans, &playerPos);
+        }
+        break;
+    }
+    
+    // Iterate dictionary to find secret rooms
+    static DWORD lastDebugLog = 0;
+    DWORD now = GetTickCount();
+    bool shouldLog = (now - lastDebugLog > 2000);
+    
+    for (int i = 0; i < dictCount + 50 && i < 500; i++) {
+        char* entryBase = (char*)entries + 0x20 + i * 24;
+        int hashCode = *(int*)entryBase;
+        if (hashCode < 0) continue;
         
-        auto pos = (Vector3*)il2cpp_object_unbox(posObj);
+        auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
+        if (!playerObj) continue;
+        
+        // Read FightType and SID
+        int fightType = *(int*)((char*)playerObj + OFFSET_FIGHTTYPE);
+        int sid = *(int*)((char*)playerObj + OFFSET_SID);
+        
+        // Filter: only secret room wall, secret room portal, and treasure box
+        bool isSecretWall = (fightType == FIGHTTYPE_OBSTACLE_NORMAL && 
+            (sid == SID_SECRET_WALL || sid == SID_SECRET_WALL_2 || sid == SID_SECRET_WALL_3));
+        bool isSecretPortal = (fightType == FIGHTTYPE_NPC_TRANSFER && 
+            (sid == SID_SECRET_PORTAL || sid == SID_SECRET_PORTAL_2));
+        bool isTreasureBox = (fightType == FIGHTTYPE_NPC_TREASUREBOX || fightType == FIGHTTYPE_NPC_EVENT);
+        
+        if (!isSecretWall && !isSecretPortal && !isTreasureBox) continue;
+        
+        // Get position from gameTrans
+        auto gameTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
+        if (!gameTrans) continue;
+        
+        Vector3 pos;
+        g_GetPositionInjected(gameTrans, &pos);
         
         ESPObject obj;
-        obj.worldPos = *pos;
-        obj.isMonster = true;
+        obj.worldPos = pos;
+        obj.isMonster = !isTreasureBox;  // Blue for secret room, Green for treasure box
         
         // Calculate distance
-        float dx = pos->x - playerPos.x;
-        float dy = pos->y - playerPos.y;
-        float dz = pos->z - playerPos.z;
+        float dx = pos.x - playerPos.x;
+        float dy = pos.y - playerPos.y;
+        float dz = pos.z - playerPos.z;
         obj.distance = sqrtf(dx*dx + dy*dy + dz*dz);
         
         newObjects.push_back(obj);
+    }
+    
+    if (shouldLog) {
+        lastDebugLog = now;
     }
     
     AcquireSRWLockExclusive(&g_ESPLock);
@@ -562,6 +651,7 @@ bool InitIL2CPP() {
     // Camera matrix functions (for ESP)
     g_GetWorldToCameraMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_WORLDTOCAMERAMATRIX);
     g_GetProjectionMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_PROJECTIONMATRIX);
+    g_GetMainCameraComDirect = (GetMainCameraComDirect_t)((BYTE*)g_GameAssembly + RVA_GET_MAINCAMERACOM_DIRECT);
 
     return g_GetMonsters && g_GetWeakTrans && g_GetPosition;
 }
@@ -1178,15 +1268,63 @@ void InitImGui(IDXGISwapChain* swapChain) {
     printf("[GFR Mod] ImGui initialized for ESP\n");
 }
 
+// Render Menu
+void RenderMenu() {
+    if (!g_ImGuiInitialized) return;
+    if (!g_MenuVisible) return;
+    
+    ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
+    ImGui::Begin("GFR Mod Menu [HOME to toggle]", &g_MenuVisible);
+    
+    ImGui::Text("=== Combat ===");
+    ImGui::Checkbox("Silent Aim [F1]", &g_SilentAimEnabled);
+    ImGui::Checkbox("Skill Aim [F7]", &g_SkillAimEnabled);
+    ImGui::Checkbox("No Recoil [F4]", &g_NoRecoil);
+    ImGui::Checkbox("No Spread [F5]", &g_NoSpread);
+    ImGui::Checkbox("Fast Bullet [F6]", &g_FastBullet);
+    if (g_FastBullet) {
+        ImGui::SliderFloat("Bullet Speed", &g_BulletSpeedMultiplier, 1.0f, 200.0f);
+    }
+    ImGui::Checkbox("Big Radius [F9]", &g_BigRadius);
+    if (g_BigRadius) {
+        ImGui::SliderFloat("Radius", &g_RadiusValue, 1.0f, 999.0f);
+    }
+    
+    ImGui::Separator();
+    ImGui::Text("=== Player ===");
+    ImGui::Checkbox("Infinite Ammo [F2]", &g_InfiniteAmmo);
+    ImGui::Checkbox("Speed Boost [F3]", &g_SpeedBoost);
+    if (g_SpeedBoost) {
+        ImGui::SliderInt("Speed", &g_BoostedSpeed, 500, 2000);
+    }
+    ImGui::Checkbox("FOV Hack [F8]", &g_FOVEnabled);
+    if (g_FOVEnabled) {
+        ImGui::SliderFloat("FOV", &g_CustomFOV, 60.0f, 150.0f);
+    }
+    
+    ImGui::Separator();
+    ImGui::Text("=== ESP ===");
+    ImGui::Text("Hold ALT to show ESP");
+    ImGui::Text("Shows: Secret Rooms, Treasure Box");
+    
+    // Show detected objects count
+    AcquireSRWLockShared(&g_ESPLock);
+    ImGui::Text("Detected: %zu objects", g_ESPObjects.size());
+    ReleaseSRWLockShared(&g_ESPLock);
+    
+    ImGui::Separator();
+    ImGui::Text("=== Other ===");
+    ImGui::Text("Mouse Wheel = Auto Pickup");
+    ImGui::Text("END = Exit Mod");
+    
+    ImGui::End();
+}
+
 // Render ESP
 void RenderESP() {
     if (!g_ImGuiInitialized) return;
     if (!g_pRenderTargetView) return;
-    
-    // Safety check for view matrix
-    AcquireSRWLockShared(&g_MatrixLock);
-    bool matrixValid = g_ViewMatrixValid;
-    ReleaseSRWLockShared(&g_MatrixLock);
     
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -1203,10 +1341,10 @@ void RenderESP() {
         return;
     }
     
-    // Create fullscreen overlay
+    // Create fullscreen overlay for ESP drawing
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2((float)screenWidth, (float)screenHeight));
-    ImGui::Begin("ESP", nullptr, 
+    ImGui::Begin("ESP Overlay", nullptr, 
         ImGuiWindowFlags_NoTitleBar | 
         ImGuiWindowFlags_NoResize | 
         ImGuiWindowFlags_NoMove | 
@@ -1216,59 +1354,158 @@ void RenderESP() {
     
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
+    // Check matrix validity
+    AcquireSRWLockShared(&g_MatrixLock);
+    bool matrixValid = g_ViewMatrixValid;
+    ReleaseSRWLockShared(&g_MatrixLock);
+    
     // Draw ESP for each object
     AcquireSRWLockShared(&g_ESPLock);
+    int drawnCount = 0;
     for (const auto& obj : g_ESPObjects) {
         Vector3 screenPos;
-        if (WorldToScreen(obj.worldPos, screenPos, screenWidth, screenHeight)) {
-            // Check if on screen
-            if (screenPos.x >= 0 && screenPos.x <= screenWidth && 
-                screenPos.y >= 0 && screenPos.y <= screenHeight) {
+        bool w2sResult = WorldToScreen(obj.worldPos, screenPos, screenWidth, screenHeight);
+        
+        if (w2sResult) {
+            // Check if on screen (with some margin)
+            if (screenPos.x >= -50 && screenPos.x <= screenWidth + 50 && 
+                screenPos.y >= -50 && screenPos.y <= screenHeight + 50) {
                 
                 // Draw box around target
-                float boxSize = 30.0f / (obj.distance / 10.0f);
-                if (boxSize < 5.0f) boxSize = 5.0f;
+                float boxSize = 30.0f / (obj.distance / 10.0f + 0.1f);
+                if (boxSize < 10.0f) boxSize = 10.0f;
                 if (boxSize > 50.0f) boxSize = 50.0f;
                 
-                ImU32 color = obj.isMonster ? IM_COL32(255, 0, 0, 255) : IM_COL32(0, 255, 0, 255);
+                // Portal = blue, Box = green
+                ImU32 color = obj.isMonster ? IM_COL32(0, 128, 255, 255) : IM_COL32(0, 255, 0, 255);
                 
                 // Draw box
                 drawList->AddRect(
                     ImVec2(screenPos.x - boxSize, screenPos.y - boxSize),
                     ImVec2(screenPos.x + boxSize, screenPos.y + boxSize),
-                    color, 0.0f, 0, 2.0f);
+                    color, 0.0f, 0, 3.0f);
                 
-                // Draw distance text
-                char distText[32];
-                sprintf_s(distText, "%.0fm", obj.distance);
+                // Draw label and distance text
+                char labelText[64];
+                const char* label = obj.isMonster ? "Secret" : "Box";
+                sprintf_s(labelText, "%s %.0fm", label, obj.distance);
                 drawList->AddText(
-                    ImVec2(screenPos.x - 15, screenPos.y + boxSize + 2),
-                    IM_COL32(255, 255, 255, 255), distText);
+                    ImVec2(screenPos.x - 25, screenPos.y + boxSize + 2),
+                    IM_COL32(255, 255, 255, 255), labelText);
+                    
+                drawnCount++;
             }
         }
     }
+    size_t totalObjects = g_ESPObjects.size();
     ReleaseSRWLockShared(&g_ESPLock);
     
-    // Draw ESP indicator
-    drawList->AddText(ImVec2(10, 10), IM_COL32(0, 255, 0, 255), "[ESP ACTIVE - Release ALT to hide]");
+    ImGui::End();
+    
+    // Create debug info window (top-left corner)
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(250, 100));
+    ImGui::Begin("ESP Debug", nullptr, 
+        ImGuiWindowFlags_NoResize | 
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse);
+    
+    ImGui::Text("ESP Active");
+    ImGui::Text("Matrix: %s", matrixValid ? "OK" : "INVALID");
+    ImGui::Text("Objects: %zu", totalObjects);
+    ImGui::Text("Drawn: %d", drawnCount);
     
     ImGui::End();
+    
     ImGui::Render();
     
     g_pContext->OMSetRenderTargets(1, &g_pRenderTargetView, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
+// Debug counter for Present hook
+static int g_PresentCallCount = 0;
+static DWORD g_LastPresentLog = 0;
+
 // Hooked Present
 HRESULT __stdcall HookedPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    g_PresentCallCount++;
+    
     if (!g_ImGuiInitialized) {
         InitImGui(swapChain);
     }
     
-    // Check ALT key for ESP toggle
-    g_ESPEnabled = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    // Toggle menu with HOME key
+    static bool homeWasPressed = false;
+    bool homePressed = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+    if (homePressed && !homeWasPressed) {
+        g_MenuVisible = !g_MenuVisible;
+    }
+    homeWasPressed = homePressed;
     
-    if (g_ESPEnabled) {
+    // Check ALT key for ESP toggle
+    bool altPressed = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    g_ESPEnabled = altPressed;
+    
+    // Render menu if visible
+    if (g_MenuVisible) {
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+        
+        RenderMenu();
+        
+        // If ESP is also active, render it in the same frame
+        if (g_ESPEnabled) {
+            // Get screen size
+            RECT rect;
+            GetClientRect(g_GameWindow, &rect);
+            int screenWidth = rect.right - rect.left;
+            int screenHeight = rect.bottom - rect.top;
+            
+            if (screenWidth > 0 && screenHeight > 0) {
+                ImGui::SetNextWindowPos(ImVec2(0, 0));
+                ImGui::SetNextWindowSize(ImVec2((float)screenWidth, (float)screenHeight));
+                ImGui::Begin("ESP Overlay", nullptr, 
+                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                    ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
+                
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                
+                AcquireSRWLockShared(&g_ESPLock);
+                for (const auto& obj : g_ESPObjects) {
+                    Vector3 screenPos;
+                    if (WorldToScreen(obj.worldPos, screenPos, screenWidth, screenHeight)) {
+                        if (screenPos.x >= -50 && screenPos.x <= screenWidth + 50 && 
+                            screenPos.y >= -50 && screenPos.y <= screenHeight + 50) {
+                            float boxSize = 30.0f / (obj.distance / 10.0f + 0.1f);
+                            boxSize = fmaxf(10.0f, fminf(50.0f, boxSize));
+                            // Blue for secret room, Green for treasure box
+                            ImU32 color = obj.isMonster ? IM_COL32(0, 128, 255, 255) : IM_COL32(0, 255, 0, 255);
+                            drawList->AddRect(
+                                ImVec2(screenPos.x - boxSize, screenPos.y - boxSize),
+                                ImVec2(screenPos.x + boxSize, screenPos.y + boxSize),
+                                color, 0.0f, 0, 3.0f);
+                            char labelText[64];
+                            const char* label = obj.isMonster ? "Secret" : "Box";
+                            sprintf_s(labelText, "%s %.0fm", label, obj.distance);
+                            drawList->AddText(ImVec2(screenPos.x - 25, screenPos.y + boxSize + 2),
+                                IM_COL32(255, 255, 255, 255), labelText);
+                        }
+                    }
+                }
+                ReleaseSRWLockShared(&g_ESPLock);
+                
+                ImGui::End();
+            }
+        }
+        
+        ImGui::Render();
+        g_pContext->OMSetRenderTargets(1, &g_pRenderTargetView, nullptr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    }
+    else if (g_ESPEnabled) {
         RenderESP();
     }
     
@@ -1481,19 +1718,7 @@ void MainThread(HMODULE hModule) {
         printf("[GFR Mod] Warning: DX11 hooks failed, ESP disabled\n");
     }
     
-    printf("[GFR Mod] Ready!\n");
-    printf("  F1 = Silent Aim (%s)\n", g_SilentAimEnabled ? "ON" : "OFF");
-    printf("  F2 = Infinite Ammo (%s)\n", g_InfiniteAmmo ? "ON" : "OFF");
-    printf("  F3 = Speed Boost (%s)\n", g_SpeedBoost ? "ON" : "OFF");
-    printf("  F4 = No Recoil (%s)\n", g_NoRecoil ? "ON" : "OFF");
-    printf("  F5 = No Spread (%s)\n", g_NoSpread ? "ON" : "OFF");
-    printf("  F6 = Fast Bullet (%s)\n", g_FastBullet ? "ON" : "OFF");
-    printf("  F7 = Skill Aim (%s)\n", g_SkillAimEnabled ? "ON" : "OFF");
-    printf("  F8 = FOV Hack (%s, %.0f)\n", g_FOVEnabled ? "ON" : "OFF", g_CustomFOV);
-    printf("  F9 = Big Radius (%s, %.0f)\n", g_BigRadius ? "ON" : "OFF", g_RadiusValue);
-    printf("  ALT (Hold) = ESP\n");
-    printf("  Mouse Wheel = Auto Pickup\n");
-    printf("  END = Exit\n");
+    printf("[GFR Mod] Ready! Press HOME to open menu\n");
 
     // Initialize default ON features
     if (g_InfiniteAmmo && g_SetNoCostBullet) {
@@ -1507,7 +1732,6 @@ void MainThread(HMODULE hModule) {
 
         if (GetAsyncKeyState(VK_F1) & 1) {
             g_SilentAimEnabled = !g_SilentAimEnabled;
-            printf("[GFR Mod] Silent Aim: %s\n", g_SilentAimEnabled ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F2) & 1) {
@@ -1517,12 +1741,10 @@ void MainThread(HMODULE hModule) {
                 void* args[] = { &enable };
                 il2cpp_runtime_invoke(g_SetNoCostBullet, nullptr, args, nullptr);
             }
-            printf("[GFR Mod] Infinite Ammo: %s\n", g_InfiniteAmmo ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F3) & 1) {
             g_SpeedBoost = !g_SpeedBoost;
-            printf("[GFR Mod] Speed Boost: %s\n", g_SpeedBoost ? "ON" : "OFF");
 
             auto localPlayer = GetLocalPlayer();
             if (localPlayer) {
@@ -1540,38 +1762,31 @@ void MainThread(HMODULE hModule) {
 
         if (GetAsyncKeyState(VK_F4) & 1) {
             g_NoRecoil = !g_NoRecoil;
-            printf("[GFR Mod] No Recoil: %s\n", g_NoRecoil ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F5) & 1) {
             g_NoSpread = !g_NoSpread;
-            printf("[GFR Mod] No Spread: %s\n", g_NoSpread ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F6) & 1) {
             g_FastBullet = !g_FastBullet;
-            printf("[GFR Mod] Fast Bullet: %s\n", g_FastBullet ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F7) & 1) {
             g_SkillAimEnabled = !g_SkillAimEnabled;
-            printf("[GFR Mod] Skill Aim: %s\n", g_SkillAimEnabled ? "ON" : "OFF");
         }
 
         if (GetAsyncKeyState(VK_F8) & 1) {
             g_FOVEnabled = !g_FOVEnabled;
-            printf("[GFR Mod] FOV Hack: %s (%.0f)\n", g_FOVEnabled ? "ON" : "OFF", g_CustomFOV);
         }
 
         if (GetAsyncKeyState(VK_F9) & 1) {
             g_BigRadius = !g_BigRadius;
-            printf("[GFR Mod] Big Radius: %s (%.0f)\n", g_BigRadius ? "ON" : "OFF", g_RadiusValue);
         }
 
         if (GetAsyncKeyState(VK_MBUTTON) & 1) {
             if (g_OneGPU || g_StartGPU) {
                 AutoPickup();
-                printf("[GFR Mod] Auto Pickup - picked up ALL items on map!\n");
             }
         }
 
