@@ -5,7 +5,16 @@
 #include <thread>
 #include <string>
 #include <atomic>
+#include <vector>
 #include <MinHook.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
+
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 
 // IL2CPP types
 typedef void* Il2CppObject;
@@ -119,6 +128,10 @@ const DWORD RVA_SIGHTLOGIC_GETCURBULLETTRACERADIUS = 0x00a7c380;
 const DWORD RVA_CAMERA_GET_FOV = 0x025d1480;
 const DWORD RVA_CAMERA_SET_FOV = 0x025d22c0;
 
+// Camera matrix RVAs (for ESP world-to-screen)
+const DWORD RVA_CAMERA_WORLDTOCAMERAMATRIX = 0x025d2a00;
+const DWORD RVA_CAMERA_PROJECTIONMATRIX = 0x025d1f00;
+
 // Transform position functions
 typedef void (*GetPositionInjected_t)(void* transform, Vector3* ret);
 typedef void (*SetPositionInjected_t)(void* transform, Vector3* value);
@@ -149,6 +162,16 @@ GetFOV_t g_GetFOV = nullptr;
 SetFOV_t g_SetFOV = nullptr;
 void* g_CachedCamera = nullptr;
 
+// Matrix4x4 structure
+struct Matrix4x4 {
+    float m[16];
+};
+
+// Camera matrix function pointers
+typedef void (*GetMatrix_t)(void* camera, Matrix4x4* ret);
+GetMatrix_t g_GetWorldToCameraMatrix = nullptr;
+GetMatrix_t g_GetProjectionMatrix = nullptr;
+
 // Settings
 bool g_Running = true;
 bool g_SilentAimEnabled = true;
@@ -160,6 +183,7 @@ bool g_NoSpread = true;
 bool g_FastBullet = true;
 bool g_FOVEnabled = false;  // FOV hack - OFF by default
 bool g_BigRadius = false;   // Big explosion radius - OFF by default
+bool g_ESPEnabled = false;  // ESP - OFF by default, toggle with ALT hold
 float g_CustomFOV = 120.0f;  // Custom FOV value
 float g_OriginalFOV = 0.0f;  // Store original FOV
 float g_BulletSpeedMultiplier = 100.0f;
@@ -171,6 +195,37 @@ float g_OriginalJumpHeight = 0.0f;
 float g_BoostedJumpHeight = 1.3f;  // 1.3x jump height
 DWORD g_LastSpeedCheck = 0;
 DWORD g_LastAmmoRefill = 0;
+
+// ESP data structure
+struct ESPObject {
+    Vector3 worldPos;
+    Vector3 screenPos;
+    bool onScreen;
+    float distance;
+    bool isMonster;
+};
+std::vector<ESPObject> g_ESPObjects;
+SRWLOCK g_ESPLock = SRWLOCK_INIT;
+
+// DX11 globals
+ID3D11Device* g_pDevice = nullptr;
+ID3D11DeviceContext* g_pContext = nullptr;
+ID3D11RenderTargetView* g_pRenderTargetView = nullptr;
+IDXGISwapChain* g_pSwapChain = nullptr;
+HWND g_GameWindow = nullptr;
+bool g_ImGuiInitialized = false;
+WNDPROC g_OriginalWndProc = nullptr;
+
+// DX11 hook types
+typedef HRESULT(__stdcall* Present_t)(IDXGISwapChain*, UINT, UINT);
+typedef HRESULT(__stdcall* ResizeBuffers_t)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
+Present_t g_OriginalPresent = nullptr;
+ResizeBuffers_t g_OriginalResizeBuffers = nullptr;
+
+// View matrix for world-to-screen
+float g_ViewMatrix[16] = {0};
+bool g_ViewMatrixValid = false;
+SRWLOCK g_MatrixLock = SRWLOCK_INIT;
 
 // Cached target for silent aim (updated in main loop, used in hooks)
 // Using SRWLOCK for proper thread synchronization
@@ -227,6 +282,149 @@ Il2CppImage* FindImage(const char* name) {
     }
     return nullptr;
 }
+
+// Forward declarations
+Il2CppObject* GetLocalPlayer();
+
+// World to Screen conversion
+bool WorldToScreen(const Vector3& worldPos, Vector3& screenPos, int screenWidth, int screenHeight) {
+    AcquireSRWLockShared(&g_MatrixLock);
+    if (!g_ViewMatrixValid) {
+        ReleaseSRWLockShared(&g_MatrixLock);
+        return false;
+    }
+    
+    float* m = g_ViewMatrix;
+    
+    // Calculate clip coordinates
+    float clipX = worldPos.x * m[0] + worldPos.y * m[4] + worldPos.z * m[8] + m[12];
+    float clipY = worldPos.x * m[1] + worldPos.y * m[5] + worldPos.z * m[9] + m[13];
+    float clipW = worldPos.x * m[3] + worldPos.y * m[7] + worldPos.z * m[11] + m[15];
+    
+    ReleaseSRWLockShared(&g_MatrixLock);
+    
+    if (clipW < 0.1f) return false;  // Behind camera
+    
+    // Perspective divide
+    float ndcX = clipX / clipW;
+    float ndcY = clipY / clipW;
+    
+    // Convert to screen coordinates
+    screenPos.x = (screenWidth / 2.0f) * (1.0f + ndcX);
+    screenPos.y = (screenHeight / 2.0f) * (1.0f - ndcY);
+    screenPos.z = clipW;  // Store depth
+    
+    return true;
+}
+
+// Multiply two 4x4 matrices
+void MultiplyMatrix(const float* a, const float* b, float* result) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            result[i * 4 + j] = 
+                a[i * 4 + 0] * b[0 * 4 + j] +
+                a[i * 4 + 1] * b[1 * 4 + j] +
+                a[i * 4 + 2] * b[2 * 4 + j] +
+                a[i * 4 + 3] * b[3 * 4 + j];
+        }
+    }
+}
+
+// Update view-projection matrix from camera
+void UpdateViewMatrix() {
+    if (!g_GetMainCameraCom || !g_GetWorldToCameraMatrix || !g_GetProjectionMatrix) return;
+    
+    auto camera = il2cpp_runtime_invoke(g_GetMainCameraCom, nullptr, nullptr, nullptr);
+    if (!camera) return;
+    
+    Matrix4x4 viewMatrix, projMatrix;
+    g_GetWorldToCameraMatrix(camera, &viewMatrix);
+    g_GetProjectionMatrix(camera, &projMatrix);
+    
+    // Multiply view * projection
+    float vpMatrix[16];
+    MultiplyMatrix(projMatrix.m, viewMatrix.m, vpMatrix);
+    
+    AcquireSRWLockExclusive(&g_MatrixLock);
+    memcpy(g_ViewMatrix, vpMatrix, sizeof(g_ViewMatrix));
+    g_ViewMatrixValid = true;
+    ReleaseSRWLockExclusive(&g_MatrixLock);
+}
+
+// Update ESP objects list
+void UpdateESPObjects() {
+    if (!g_GetMonsters || !g_GetWeakTrans || !g_GetPosition) return;
+    
+    std::vector<ESPObject> newObjects;
+    
+    // Get player position first
+    auto localPlayer = GetLocalPlayer();
+    Vector3 playerPos = {0, 0, 0};
+    if (localPlayer) {
+        auto playerTrans = *(Il2CppObject**)((char*)localPlayer + OFFSET_GAMETRANS);
+        if (playerTrans && g_GetPositionInjected) {
+            g_GetPositionInjected(playerTrans, &playerPos);
+        }
+    }
+    
+    auto monsters = il2cpp_runtime_invoke(g_GetMonsters, nullptr, nullptr, nullptr);
+    if (!monsters) {
+        AcquireSRWLockExclusive(&g_ESPLock);
+        g_ESPObjects.clear();
+        ReleaseSRWLockExclusive(&g_ESPLock);
+        return;
+    }
+    
+    if (!g_ListGetCount || !g_ListGetItem) {
+        auto listClass = *(Il2CppClass**)monsters;
+        g_ListGetCount = il2cpp_class_get_method_from_name(listClass, "get_Count", 0);
+        g_ListGetItem = il2cpp_class_get_method_from_name(listClass, "get_Item", 1);
+    }
+    if (!g_ListGetCount || !g_ListGetItem) return;
+    
+    auto countObj = il2cpp_runtime_invoke(g_ListGetCount, monsters, nullptr, nullptr);
+    if (!countObj) return;
+    int count = *(int*)il2cpp_object_unbox(countObj);
+    
+    if (count > 50) count = 50;  // Limit for performance
+    
+    for (int i = 0; i < count; i++) {
+        void* args[] = { &i };
+        auto monster = il2cpp_runtime_invoke(g_ListGetItem, monsters, args, nullptr);
+        if (!monster) continue;
+        
+        auto bodyPartCom = *(Il2CppObject**)((char*)monster + OFFSET_BODYPARTCOM);
+        if (!bodyPartCom) continue;
+        
+        bool findNearest = true;
+        void* weakArgs[] = { &findNearest };
+        auto weakTrans = il2cpp_runtime_invoke(g_GetWeakTrans, bodyPartCom, weakArgs, nullptr);
+        if (!weakTrans) continue;
+        
+        auto posObj = il2cpp_runtime_invoke(g_GetPosition, weakTrans, nullptr, nullptr);
+        if (!posObj) continue;
+        
+        auto pos = (Vector3*)il2cpp_object_unbox(posObj);
+        
+        ESPObject obj;
+        obj.worldPos = *pos;
+        obj.isMonster = true;
+        
+        // Calculate distance
+        float dx = pos->x - playerPos.x;
+        float dy = pos->y - playerPos.y;
+        float dz = pos->z - playerPos.z;
+        obj.distance = sqrtf(dx*dx + dy*dy + dz*dz);
+        
+        newObjects.push_back(obj);
+    }
+    
+    AcquireSRWLockExclusive(&g_ESPLock);
+    g_ESPObjects = std::move(newObjects);
+    ReleaseSRWLockExclusive(&g_ESPLock);
+}
+
+// Forward declaration is above
 
 bool InitIL2CPP() {
     g_GameAssembly = GetModuleHandleA("GameAssembly.dll");
@@ -341,6 +539,10 @@ bool InitIL2CPP() {
     // FOV functions (direct RVA)
     g_GetFOV = (GetFOV_t)((BYTE*)g_GameAssembly + RVA_CAMERA_GET_FOV);
     g_SetFOV = (SetFOV_t)((BYTE*)g_GameAssembly + RVA_CAMERA_SET_FOV);
+
+    // Camera matrix functions (for ESP)
+    g_GetWorldToCameraMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_WORLDTOCAMERAMATRIX);
+    g_GetProjectionMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_PROJECTIONMATRIX);
 
     return g_GetMonsters && g_GetWeakTrans && g_GetPosition;
 }
@@ -909,6 +1111,249 @@ bool InstallHooks() {
     return true;
 }
 
+// ImGui WndProc handler
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+LRESULT CALLBACK HookedWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (g_ImGuiInitialized) {
+        ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+    }
+    return CallWindowProc(g_OriginalWndProc, hWnd, msg, wParam, lParam);
+}
+
+// Initialize ImGui
+void InitImGui(IDXGISwapChain* swapChain) {
+    if (g_ImGuiInitialized) return;
+    
+    DXGI_SWAP_CHAIN_DESC desc;
+    swapChain->GetDesc(&desc);
+    g_GameWindow = desc.OutputWindow;
+    
+    swapChain->GetDevice(__uuidof(ID3D11Device), (void**)&g_pDevice);
+    if (!g_pDevice) return;
+    
+    g_pDevice->GetImmediateContext(&g_pContext);
+    if (!g_pContext) return;
+    
+    // Create render target view
+    ID3D11Texture2D* backBuffer = nullptr;
+    swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+    if (backBuffer) {
+        g_pDevice->CreateRenderTargetView(backBuffer, nullptr, &g_pRenderTargetView);
+        backBuffer->Release();
+    }
+    
+    // Initialize ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    
+    ImGui_ImplWin32_Init(g_GameWindow);
+    ImGui_ImplDX11_Init(g_pDevice, g_pContext);
+    
+    // Hook WndProc
+    g_OriginalWndProc = (WNDPROC)SetWindowLongPtr(g_GameWindow, GWLP_WNDPROC, (LONG_PTR)HookedWndProc);
+    
+    g_ImGuiInitialized = true;
+    printf("[GFR Mod] ImGui initialized for ESP\n");
+}
+
+// Render ESP
+void RenderESP() {
+    if (!g_ImGuiInitialized || !g_ESPEnabled) return;
+    
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    
+    // Get screen size
+    RECT rect;
+    GetClientRect(g_GameWindow, &rect);
+    int screenWidth = rect.right - rect.left;
+    int screenHeight = rect.bottom - rect.top;
+    
+    // Create fullscreen overlay
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)screenWidth, (float)screenHeight));
+    ImGui::Begin("ESP", nullptr, 
+        ImGuiWindowFlags_NoTitleBar | 
+        ImGuiWindowFlags_NoResize | 
+        ImGuiWindowFlags_NoMove | 
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBackground);
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Draw ESP for each object
+    AcquireSRWLockShared(&g_ESPLock);
+    for (const auto& obj : g_ESPObjects) {
+        Vector3 screenPos;
+        if (WorldToScreen(obj.worldPos, screenPos, screenWidth, screenHeight)) {
+            // Check if on screen
+            if (screenPos.x >= 0 && screenPos.x <= screenWidth && 
+                screenPos.y >= 0 && screenPos.y <= screenHeight) {
+                
+                // Draw box around target
+                float boxSize = 30.0f / (obj.distance / 10.0f);
+                if (boxSize < 5.0f) boxSize = 5.0f;
+                if (boxSize > 50.0f) boxSize = 50.0f;
+                
+                ImU32 color = obj.isMonster ? IM_COL32(255, 0, 0, 255) : IM_COL32(0, 255, 0, 255);
+                
+                // Draw box
+                drawList->AddRect(
+                    ImVec2(screenPos.x - boxSize, screenPos.y - boxSize),
+                    ImVec2(screenPos.x + boxSize, screenPos.y + boxSize),
+                    color, 0.0f, 0, 2.0f);
+                
+                // Draw distance text
+                char distText[32];
+                sprintf_s(distText, "%.0fm", obj.distance);
+                drawList->AddText(
+                    ImVec2(screenPos.x - 15, screenPos.y + boxSize + 2),
+                    IM_COL32(255, 255, 255, 255), distText);
+            }
+        }
+    }
+    ReleaseSRWLockShared(&g_ESPLock);
+    
+    // Draw ESP indicator
+    drawList->AddText(ImVec2(10, 10), IM_COL32(0, 255, 0, 255), "[ESP ACTIVE - Release ALT to hide]");
+    
+    ImGui::End();
+    ImGui::Render();
+    
+    g_pContext->OMSetRenderTargets(1, &g_pRenderTargetView, nullptr);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+// Hooked Present
+HRESULT __stdcall HookedPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    if (!g_ImGuiInitialized) {
+        InitImGui(swapChain);
+    }
+    
+    // Check ALT key for ESP toggle
+    g_ESPEnabled = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    
+    if (g_ESPEnabled) {
+        RenderESP();
+    }
+    
+    return g_OriginalPresent(swapChain, syncInterval, flags);
+}
+
+// Hooked ResizeBuffers
+HRESULT __stdcall HookedResizeBuffers(IDXGISwapChain* swapChain, UINT bufferCount, UINT width, UINT height, DXGI_FORMAT format, UINT flags) {
+    if (g_pRenderTargetView) {
+        g_pRenderTargetView->Release();
+        g_pRenderTargetView = nullptr;
+    }
+    
+    HRESULT hr = g_OriginalResizeBuffers(swapChain, bufferCount, width, height, format, flags);
+    
+    // Recreate render target
+    if (SUCCEEDED(hr) && g_pDevice) {
+        ID3D11Texture2D* backBuffer = nullptr;
+        swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+        if (backBuffer) {
+            g_pDevice->CreateRenderTargetView(backBuffer, nullptr, &g_pRenderTargetView);
+            backBuffer->Release();
+        }
+    }
+    
+    return hr;
+}
+
+// Get DX11 Present address from vtable
+void* GetPresentAddress() {
+    // Create dummy device to get vtable
+    D3D_FEATURE_LEVEL featureLevel;
+    IDXGISwapChain* swapChain = nullptr;
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 1;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = GetForegroundWindow();
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+        nullptr, 0, D3D11_SDK_VERSION, &sd,
+        &swapChain, &device, &featureLevel, &context);
+    
+    if (FAILED(hr)) return nullptr;
+    
+    // Get vtable
+    void** vtable = *(void***)swapChain;
+    void* presentAddr = vtable[8];  // Present is at index 8
+    void* resizeAddr = vtable[13];  // ResizeBuffers is at index 13
+    
+    // Store resize address for later
+    static void* s_resizeAddr = resizeAddr;
+    
+    // Cleanup
+    swapChain->Release();
+    device->Release();
+    context->Release();
+    
+    return presentAddr;
+}
+
+bool InstallDX11Hooks() {
+    void* presentAddr = GetPresentAddress();
+    if (!presentAddr) {
+        printf("[GFR Mod] Failed to get Present address\n");
+        return false;
+    }
+    
+    if (MH_CreateHook(presentAddr, (void*)HookedPresent, (void**)&g_OriginalPresent) != MH_OK) {
+        printf("[GFR Mod] Failed to create Present hook\n");
+        return false;
+    }
+    
+    if (MH_EnableHook(presentAddr) != MH_OK) {
+        printf("[GFR Mod] Failed to enable Present hook\n");
+        return false;
+    }
+    
+    printf("[GFR Mod] DX11 hooks installed\n");
+    return true;
+}
+
+void CleanupDX11() {
+    if (g_ImGuiInitialized) {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        g_ImGuiInitialized = false;
+    }
+    
+    if (g_OriginalWndProc && g_GameWindow) {
+        SetWindowLongPtr(g_GameWindow, GWLP_WNDPROC, (LONG_PTR)g_OriginalWndProc);
+    }
+    
+    if (g_pRenderTargetView) {
+        g_pRenderTargetView->Release();
+        g_pRenderTargetView = nullptr;
+    }
+    if (g_pContext) {
+        g_pContext->Release();
+        g_pContext = nullptr;
+    }
+    if (g_pDevice) {
+        g_pDevice->Release();
+        g_pDevice = nullptr;
+    }
+}
+
 void RemoveHooks() {
     // Signal shutdown first - prevents hooks from doing work
     g_ShuttingDown.store(true, std::memory_order_release);
@@ -918,6 +1363,9 @@ void RemoveHooks() {
 
     // Mark hooks as uninstalled
     g_HooksInstalled.store(false, std::memory_order_release);
+
+    // Cleanup DX11/ImGui
+    CleanupDX11();
 
     // Disable all hooks
     MH_DisableHook(MH_ALL_HOOKS);
@@ -975,6 +1423,11 @@ void MainThread(HMODULE hModule) {
         return;
     }
     
+    // Install DX11 hooks for ESP
+    if (!InstallDX11Hooks()) {
+        printf("[GFR Mod] Warning: DX11 hooks failed, ESP disabled\n");
+    }
+    
     printf("[GFR Mod] Ready!\n");
     printf("  F1 = Silent Aim (%s)\n", g_SilentAimEnabled ? "ON" : "OFF");
     printf("  F2 = Infinite Ammo (%s)\n", g_InfiniteAmmo ? "ON" : "OFF");
@@ -985,6 +1438,7 @@ void MainThread(HMODULE hModule) {
     printf("  F7 = Skill Aim (%s)\n", g_SkillAimEnabled ? "ON" : "OFF");
     printf("  F8 = FOV Hack (%s, %.0f)\n", g_FOVEnabled ? "ON" : "OFF", g_CustomFOV);
     printf("  F9 = Big Radius (%s, %.0f)\n", g_BigRadius ? "ON" : "OFF", g_RadiusValue);
+    printf("  ALT (Hold) = ESP\n");
     printf("  Mouse Wheel = Auto Pickup\n");
     printf("  END = Exit\n");
 
@@ -1103,6 +1557,12 @@ void MainThread(HMODULE hModule) {
                         }
                     }
                 }
+            }
+            
+            // Update ESP objects when ALT is held
+            if (GetAsyncKeyState(VK_MENU) & 0x8000) {
+                UpdateViewMatrix();
+                UpdateESPObjects();
             }
             
         } __except(EXCEPTION_EXECUTE_HANDLER) {

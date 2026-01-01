@@ -11,7 +11,25 @@ add_subdirectory(minhook)
 add_executable(Injector WIN32 src/injector.cpp)
 target_link_libraries(Injector PRIVATE user32)
 
+# ImGui sources
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/imgui)
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+)
+
 # Internal Mod DLL (inject into game)
-add_library(InternalAimbot SHARED src/internal_aimbot.cpp)
-target_include_directories(InternalAimbot PRIVATE minhook/include)
-target_link_libraries(InternalAimbot PRIVATE user32 minhook)
+add_library(InternalAimbot SHARED 
+    src/internal_aimbot.cpp
+    ${IMGUI_SOURCES}
+)
+target_include_directories(InternalAimbot PRIVATE 
+    minhook/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+target_link_libraries(InternalAimbot PRIVATE user32 minhook d3d11 dxgi)
