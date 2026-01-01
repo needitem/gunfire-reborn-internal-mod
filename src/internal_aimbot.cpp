@@ -128,9 +128,9 @@ const DWORD RVA_SIGHTLOGIC_GETCURBULLETTRACERADIUS = 0x00a7c380;
 const DWORD RVA_CAMERA_GET_FOV = 0x025d1480;
 const DWORD RVA_CAMERA_SET_FOV = 0x025d22c0;
 
-// Camera matrix RVAs (for ESP world-to-screen)
-const DWORD RVA_CAMERA_WORLDTOCAMERAMATRIX = 0x025d2a00;
-const DWORD RVA_CAMERA_PROJECTIONMATRIX = 0x025d1f00;
+// Camera matrix RVAs (for ESP world-to-screen) - CORRECTED
+const DWORD RVA_CAMERA_WORLDTOCAMERAMATRIX = 0x025d1d70;  // get_worldToCameraMatrix_Injected
+const DWORD RVA_CAMERA_PROJECTIONMATRIX = 0x025d1860;     // get_projectionMatrix_Injected
 
 // Transform position functions
 typedef void (*GetPositionInjected_t)(void* transform, Vector3* ret);
@@ -332,14 +332,33 @@ void MultiplyMatrix(const float* a, const float* b, float* result) {
 
 // Update view-projection matrix from camera
 void UpdateViewMatrix() {
-    if (!g_GetMainCameraCom || !g_GetWorldToCameraMatrix || !g_GetProjectionMatrix) return;
+    if (!g_GetMainCameraCom || !g_GetWorldToCameraMatrix || !g_GetProjectionMatrix) {
+        AcquireSRWLockExclusive(&g_MatrixLock);
+        g_ViewMatrixValid = false;
+        ReleaseSRWLockExclusive(&g_MatrixLock);
+        return;
+    }
     
     auto camera = il2cpp_runtime_invoke(g_GetMainCameraCom, nullptr, nullptr, nullptr);
-    if (!camera) return;
+    if (!camera) {
+        AcquireSRWLockExclusive(&g_MatrixLock);
+        g_ViewMatrixValid = false;
+        ReleaseSRWLockExclusive(&g_MatrixLock);
+        return;
+    }
     
-    Matrix4x4 viewMatrix, projMatrix;
-    g_GetWorldToCameraMatrix(camera, &viewMatrix);
-    g_GetProjectionMatrix(camera, &projMatrix);
+    Matrix4x4 viewMatrix = {0}, projMatrix = {0};
+    
+    // Safe call with null checks
+    __try {
+        g_GetWorldToCameraMatrix(camera, &viewMatrix);
+        g_GetProjectionMatrix(camera, &projMatrix);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        AcquireSRWLockExclusive(&g_MatrixLock);
+        g_ViewMatrixValid = false;
+        ReleaseSRWLockExclusive(&g_MatrixLock);
+        return;
+    }
     
     // Multiply view * projection
     float vpMatrix[16];
@@ -1161,7 +1180,13 @@ void InitImGui(IDXGISwapChain* swapChain) {
 
 // Render ESP
 void RenderESP() {
-    if (!g_ImGuiInitialized || !g_ESPEnabled) return;
+    if (!g_ImGuiInitialized) return;
+    if (!g_pRenderTargetView) return;
+    
+    // Safety check for view matrix
+    AcquireSRWLockShared(&g_MatrixLock);
+    bool matrixValid = g_ViewMatrixValid;
+    ReleaseSRWLockShared(&g_MatrixLock);
     
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -1172,6 +1197,11 @@ void RenderESP() {
     GetClientRect(g_GameWindow, &rect);
     int screenWidth = rect.right - rect.left;
     int screenHeight = rect.bottom - rect.top;
+    
+    if (screenWidth <= 0 || screenHeight <= 0) {
+        ImGui::EndFrame();
+        return;
+    }
     
     // Create fullscreen overlay
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -1268,7 +1298,25 @@ HRESULT __stdcall HookedResizeBuffers(IDXGISwapChain* swapChain, UINT bufferCoun
 }
 
 // Get DX11 Present address from vtable
+void* g_PresentAddr = nullptr;
+
 void* GetPresentAddress() {
+    // Create a temporary hidden window for dummy swap chain
+    WNDCLASSEX wc = {};
+    wc.cbSize = sizeof(WNDCLASSEX);
+    wc.lpfnWndProc = DefWindowProc;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = "DummyDX11Window";
+    RegisterClassEx(&wc);
+    
+    HWND dummyWindow = CreateWindowEx(0, wc.lpszClassName, "", WS_OVERLAPPEDWINDOW,
+        0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
+    
+    if (!dummyWindow) {
+        printf("[GFR Mod] Failed to create dummy window\n");
+        return nullptr;
+    }
+    
     // Create dummy device to get vtable
     D3D_FEATURE_LEVEL featureLevel;
     IDXGISwapChain* swapChain = nullptr;
@@ -1277,9 +1325,11 @@ void* GetPresentAddress() {
     
     DXGI_SWAP_CHAIN_DESC sd = {};
     sd.BufferCount = 1;
+    sd.BufferDesc.Width = 2;
+    sd.BufferDesc.Height = 2;
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = GetForegroundWindow();
+    sd.OutputWindow = dummyWindow;
     sd.SampleDesc.Count = 1;
     sd.Windowed = TRUE;
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
@@ -1289,37 +1339,40 @@ void* GetPresentAddress() {
         nullptr, 0, D3D11_SDK_VERSION, &sd,
         &swapChain, &device, &featureLevel, &context);
     
-    if (FAILED(hr)) return nullptr;
+    if (FAILED(hr)) {
+        printf("[GFR Mod] Failed to create dummy D3D11 device: 0x%08X\n", hr);
+        DestroyWindow(dummyWindow);
+        UnregisterClass(wc.lpszClassName, wc.hInstance);
+        return nullptr;
+    }
     
     // Get vtable
     void** vtable = *(void***)swapChain;
     void* presentAddr = vtable[8];  // Present is at index 8
-    void* resizeAddr = vtable[13];  // ResizeBuffers is at index 13
-    
-    // Store resize address for later
-    static void* s_resizeAddr = resizeAddr;
     
     // Cleanup
     swapChain->Release();
     device->Release();
     context->Release();
+    DestroyWindow(dummyWindow);
+    UnregisterClass(wc.lpszClassName, wc.hInstance);
     
     return presentAddr;
 }
 
 bool InstallDX11Hooks() {
-    void* presentAddr = GetPresentAddress();
-    if (!presentAddr) {
+    g_PresentAddr = GetPresentAddress();
+    if (!g_PresentAddr) {
         printf("[GFR Mod] Failed to get Present address\n");
         return false;
     }
     
-    if (MH_CreateHook(presentAddr, (void*)HookedPresent, (void**)&g_OriginalPresent) != MH_OK) {
+    if (MH_CreateHook(g_PresentAddr, (void*)HookedPresent, (void**)&g_OriginalPresent) != MH_OK) {
         printf("[GFR Mod] Failed to create Present hook\n");
         return false;
     }
     
-    if (MH_EnableHook(presentAddr) != MH_OK) {
+    if (MH_EnableHook(g_PresentAddr) != MH_OK) {
         printf("[GFR Mod] Failed to enable Present hook\n");
         return false;
     }
