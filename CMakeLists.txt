@@ -22,14 +22,31 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
 )
 
+# Mod source files (modular structure)
+set(MOD_SOURCES
+    src/dllmain.cpp
+    src/il2cpp/il2cpp.cpp
+    src/game/game.cpp
+    src/features/settings.cpp
+    src/features/aimbot.cpp
+    src/features/norecoil.cpp
+    src/features/fov.cpp
+    src/features/esp.cpp
+    src/features/weakness_hack.cpp
+    src/hooks/hooks.cpp
+    src/render/dx11.cpp
+    src/render/menu.cpp
+)
+
 # Internal Mod DLL (inject into game)
 add_library(InternalAimbot SHARED 
-    src/internal_aimbot.cpp
+    ${MOD_SOURCES}
     ${IMGUI_SOURCES}
 )
 target_include_directories(InternalAimbot PRIVATE 
     minhook/include
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    src
 )
 target_link_libraries(InternalAimbot PRIVATE user32 minhook d3d11 dxgi)
