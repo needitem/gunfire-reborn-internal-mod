@@ -8,6 +8,34 @@
 // offset 0x10: int length
 // offset 0x14: wchar_t[] chars
 
+// 문자열 유효성 체크 및 재생성
+static void* GetWeaknessString() {
+    // 문자열이 없거나 유효하지 않으면 재생성
+    if (!g_WeaknessString && il2cpp_string_new) {
+        g_WeaknessString = il2cpp_string_new("Monster_Weakness");
+    }
+    
+    // 유효성 체크
+    if (g_WeaknessString) {
+        __try {
+            int len = *(int*)((char*)g_WeaknessString + 0x10);
+            if (len != 16) {  // "Monster_Weakness" 길이
+                // 무효화됨, 재생성
+                if (il2cpp_string_new) {
+                    g_WeaknessString = il2cpp_string_new("Monster_Weakness");
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            // 접근 불가, 재생성
+            if (il2cpp_string_new) {
+                g_WeaknessString = il2cpp_string_new("Monster_Weakness");
+            }
+        }
+    }
+    
+    return g_WeaknessString;
+}
+
 static bool IsWeaknessTag(void* str) {
     if (!str) return false;
     
@@ -79,8 +107,11 @@ void HookedSClientHitInfoCtor(void* thisPtr, int vitid, void* luago, void* tran,
     
     if (!g_ShuttingDown.load(std::memory_order_acquire) && 
         g_HooksInstalled.load(std::memory_order_acquire) &&
-        g_WeaknessHack && g_WeaknessString && hpart && ShouldModifyHitpart(hpart)) {
-        finalHpart = g_WeaknessString;
+        g_WeaknessHack && hpart && ShouldModifyHitpart(hpart)) {
+        void* weakStr = GetWeaknessString();
+        if (weakStr) {
+            finalHpart = weakStr;
+        }
     }
     
     if (g_OriginalSClientHitInfoCtor) {
@@ -98,13 +129,16 @@ void HookedCartoonDataSetSkilllRay(void* thisPtr, void* rayHit) {
     }
     
     // hitpart 수정 (SkillRayHit 값 타입, hitpart 오프셋 0x20)
-    if (g_WeaknessHack && rayHit && g_WeaknessString) {
+    if (g_WeaknessHack && rayHit) {
         __try {
             void** hitpartPtr = (void**)((char*)rayHit + 0x20);
             void* hitpart = *hitpartPtr;
             
             if (hitpart && ShouldModifyHitpart(hitpart)) {
-                *hitpartPtr = g_WeaknessString;
+                void* weakStr = GetWeaknessString();
+                if (weakStr) {
+                    *hitpartPtr = weakStr;
+                }
             }
         } __except(EXCEPTION_EXECUTE_HANDLER) {
             // 예외 무시
@@ -126,27 +160,30 @@ void HookedCartoonDataPacketSkillRay(void* thisPtr, void* lsthit) {
     }
     
     // List<SkillRayHit>의 모든 항목 수정
-    if (g_WeaknessHack && lsthit && g_WeaknessString) {
-        __try {
-            // List<T> 구조: _items at 0x10, _size at 0x18
-            void* items = *(void**)((char*)lsthit + 0x10);
-            int size = *(int*)((char*)lsthit + 0x18);
-            
-            if (items && size > 0 && size < 100) {
-                for (int i = 0; i < size; i++) {
-                    // SkillRayHit는 값 타입, 크기 0x40 (패딩 포함)
-                    // Array 시작 오프셋 0x20, hitpart 오프셋 0x20
-                    char* rayHit = (char*)items + 0x20 + i * 0x40;
-                    void** hitpartPtr = (void**)(rayHit + 0x20);
-                    void* hitpart = *hitpartPtr;
-                    
-                    if (hitpart && ShouldModifyHitpart(hitpart)) {
-                        *hitpartPtr = g_WeaknessString;
+    if (g_WeaknessHack && lsthit) {
+        void* weakStr = GetWeaknessString();
+        if (weakStr) {
+            __try {
+                // List<T> 구조: _items at 0x10, _size at 0x18
+                void* items = *(void**)((char*)lsthit + 0x10);
+                int size = *(int*)((char*)lsthit + 0x18);
+                
+                if (items && size > 0 && size < 100) {
+                    for (int i = 0; i < size; i++) {
+                        // SkillRayHit는 값 타입, 크기 0x40 (패딩 포함)
+                        // Array 시작 오프셋 0x20, hitpart 오프셋 0x20
+                        char* rayHit = (char*)items + 0x20 + i * 0x40;
+                        void** hitpartPtr = (void**)(rayHit + 0x20);
+                        void* hitpart = *hitpartPtr;
+                        
+                        if (hitpart && ShouldModifyHitpart(hitpart)) {
+                            *hitpartPtr = weakStr;
+                        }
                     }
                 }
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                // 예외 무시
             }
-        } __except(EXCEPTION_EXECUTE_HANDLER) {
-            // 예외 무시
         }
     }
     
