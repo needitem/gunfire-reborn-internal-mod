@@ -147,9 +147,9 @@ void UpdateESPObjects() {
         int sid = *(int*)((char*)playerObj + OFFSET_SID);
         
         bool isSecretWall = (fightType == FIGHTTYPE_OBSTACLE_NORMAL && 
-            (sid == SID_SECRET_WALL || sid == SID_SECRET_WALL_2 || sid == SID_SECRET_WALL_3 || sid == SID_SECRET_WALL_4));
+            (sid == SID_SECRET_WALL || sid == SID_SECRET_WALL_2 || sid == SID_SECRET_WALL_3 || sid == SID_SECRET_WALL_4 || sid == SID_SECRET_WALL_5));
         bool isSecretPortal = (fightType == FIGHTTYPE_NPC_TRANSFER && 
-            (sid == SID_SECRET_PORTAL || sid == SID_SECRET_PORTAL_2 || sid == SID_SECRET_WALL_4));
+            (sid == SID_SECRET_PORTAL || sid == SID_SECRET_PORTAL_2 || sid == SID_SECRET_PORTAL_3));
         bool isTreasureBox = (fightType == FIGHTTYPE_NPC_TREASUREBOX || fightType == FIGHTTYPE_NPC_EVENT);
         
         if (!isSecretWall && !isSecretPortal && !isTreasureBox) continue;

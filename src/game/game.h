@@ -61,8 +61,10 @@ constexpr int SID_SECRET_WALL = 1015;
 constexpr int SID_SECRET_WALL_2 = 1016;
 constexpr int SID_SECRET_WALL_3 = 1026;
 constexpr int SID_SECRET_WALL_4 = 1044;  // 3라운드 비밀방
+constexpr int SID_SECRET_WALL_5 = 1045;  // 4스테이지 비밀방
 constexpr int SID_SECRET_PORTAL = 1017;
 constexpr int SID_SECRET_PORTAL_2 = 1019;
+constexpr int SID_SECRET_PORTAL_3 = 1057;  // 4스테이지 비밀방 포탈
 
 // Function pointer types
 typedef void (*GetPositionInjected_t)(void* transform, Vector3* ret);
