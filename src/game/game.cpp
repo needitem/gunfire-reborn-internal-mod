@@ -1,4 +1,41 @@
 #include "game.h"
+#include "../features/norecoil.h"
+#include "../features/aimbot.h"
+#include "../features/fov.h"
+#include "../features/settings.h"
+#include <cstdio>
+
+// Helper: resolve a method's native pointer via IL2CPP API
+// MethodInfo struct has methodPointer as its first field (offset 0)
+static void* ResolveMethodPtr(Il2CppImage* img, const char* ns, const char* className, const char* methodName, int paramCount) {
+    if (!img) {
+        printf("[GFR Mod] Image null for %s.%s\n", ns, className);
+        return nullptr;
+    }
+    auto klass = il2cpp_class_from_name(img, ns, className);
+    if (!klass) {
+        printf("[GFR Mod] Class not found: %s.%s\n", ns, className);
+        return nullptr;
+    }
+    auto method = il2cpp_class_get_method_from_name(klass, methodName, paramCount);
+    if (!method) {
+        printf("[GFR Mod] Method not found: %s.%s.%s(%d)\n", ns, className, methodName, paramCount);
+        return nullptr;
+    }
+    // Try il2cpp_method_get_pointer first, fallback to reading MethodInfo.methodPointer directly
+    void* ptr = nullptr;
+    if (il2cpp_method_get_pointer) {
+        ptr = il2cpp_method_get_pointer(method);
+    }
+    if (!ptr) {
+        // MethodInfo.methodPointer is at offset 0
+        ptr = *(void**)method;
+    }
+    if (!ptr) {
+        printf("[GFR Mod] Failed to get pointer: %s.%s.%s\n", ns, className, methodName);
+    }
+    return ptr;
+}
 
 // Cached methods
 Il2CppMethod* g_GetMonsters = nullptr;
@@ -45,6 +82,10 @@ SetWarCash_t g_SetWarCash = nullptr;
 GetPlayerProp_t g_GetPlayerPropFunc = nullptr;
 GetFOV_t g_GetFOV = nullptr;
 SetFOV_t g_SetFOV = nullptr;
+
+// Infinite ammo hook
+void* g_GetNoCostBulletAddr = nullptr;
+GetNoCostBullet_t g_OriginalGetNoCostBullet = nullptr;
 
 // Weakness hit hack
 CartoonDataSetSkilllRay_t g_OriginalCartoonDataSetSkilllRay = nullptr;
@@ -120,28 +161,84 @@ bool InitGame() {
         g_PlayerDictField = il2cpp_class_get_field_from_name(g_NewPlayerManager, "PlayerDict");
     }
 
-    // GMStateManager
+    // GMStateManager - hook GetNoCostBullet for infinite ammo
     g_GMStateManager = il2cpp_class_from_name(imgCSharp, "", "GMStateManager");
     if (g_GMStateManager) {
-        g_SetNoCostBullet = il2cpp_class_get_method_from_name(g_GMStateManager, "SetNoCostBullet", 1);
+        g_GetNoCostBulletAddr = ResolveMethodPtr(imgCSharp, "", "GMStateManager", "GetNoCostBullet", 0);
+        printf("[GFR Mod] GetNoCostBullet resolved: %p\n", g_GetNoCostBulletAddr);
+    } else {
+        printf("[GFR Mod] GMStateManager class NOT found\n");
     }
 
-    // Direct RVA functions
-    g_GetPositionInjected = (GetPositionInjected_t)((BYTE*)g_GameAssembly + RVA_GET_POSITION_INJECTED);
-    g_SetPositionInjected = (SetPositionInjected_t)((BYTE*)g_GameAssembly + RVA_SET_POSITION_INJECTED);
-    g_GetWorldToCameraMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_WORLDTOCAMERAMATRIX);
-    g_GetProjectionMatrix = (GetMatrix_t)((BYTE*)g_GameAssembly + RVA_CAMERA_PROJECTIONMATRIX);
-    g_GetMainCameraComDirect = (GetMainCameraComDirect_t)((BYTE*)g_GameAssembly + RVA_GET_MAINCAMERACOM_DIRECT);
-    g_GetWarCash = (GetWarCash_t)((BYTE*)g_GameAssembly + RVA_GET_WARCASH);
-    g_SetWarCash = (SetWarCash_t)((BYTE*)g_GameAssembly + RVA_SET_WARCASH);
-    g_GetPlayerPropFunc = (GetPlayerProp_t)((BYTE*)g_GameAssembly + RVA_GET_PLAYERPROP);
-    g_GetFOV = (GetFOV_t)((BYTE*)g_GameAssembly + RVA_CAMERA_GET_FOV);
-    g_SetFOV = (SetFOV_t)((BYTE*)g_GameAssembly + RVA_CAMERA_SET_FOV);
+    // --- Resolve all method pointers at runtime via IL2CPP API (no hardcoded RVAs) ---
+    auto imgPhysics = FindImage("UnityEngine.PhysicsModule");
 
-    // Weakness hit hack addresses
-    g_CartoonDataSetSkilllRayAddr = (BYTE*)g_GameAssembly + RVA_CARTOONDATA_SETSKILLLRAY;
-    g_CartoonDataPacketSkillRayAddr = (BYTE*)g_GameAssembly + RVA_CARTOONDATA_PACKETSKILLRAY;
-    g_SClientHitInfoCtorAddr = (BYTE*)g_GameAssembly + RVA_SCLIENTHITINFO_CTOR;
+    // Unity engine function pointers
+    g_GetPositionInjected = (GetPositionInjected_t)ResolveMethodPtr(imgCore, "UnityEngine", "Transform", "get_position_Injected", 1);
+    g_SetPositionInjected = (SetPositionInjected_t)ResolveMethodPtr(imgCore, "UnityEngine", "Transform", "set_position_Injected", 1);
+    g_GetWorldToCameraMatrix = (GetMatrix_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_worldToCameraMatrix_Injected", 1);
+    g_GetProjectionMatrix = (GetMatrix_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_projectionMatrix_Injected", 1);
+    g_GetFOV = (GetFOV_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_fieldOfView", 0);
+    g_SetFOV = (SetFOV_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "set_fieldOfView", 1);
+
+    // Game function pointers
+    g_GetMainCameraComDirect = (GetMainCameraComDirect_t)ResolveMethodPtr(imgCSharp, "", "CameraManager", "get_MainCameraCom", 0);
+    g_GetWarCash = (GetWarCash_t)ResolveMethodPtr(imgCSharp, "", "PlayerProp", "get_WarCash", 0);
+    g_SetWarCash = (SetWarCash_t)ResolveMethodPtr(imgCSharp, "", "PlayerProp", "set_WarCash", 1);
+    g_GetPlayerPropFunc = (GetPlayerProp_t)ResolveMethodPtr(imgCSharp, "", "NewObjectCache", "GetPlayerProp", 1);
+
+    // --- Hook target addresses (resolved here, used by InstallHooks) ---
+
+    // Aimbot
+    g_EnableCtrlAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "RayCastCartoon", "EnableCtrl", 16);
+    g_EnableAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "RayCastCartoon", "Enable", 14);
+    // ThrowEnableCtrl: cannot identify correct overload by name alone, disable hook
+    g_ThrowEnableCtrlAddr = nullptr;
+    printf("[GFR Mod] ThrowEnableCtrl: skill aimbot disabled (method unresolvable by name)\n");
+
+    // NoRecoil
+    g_CameraCtrlRecoilAddr = ResolveMethodPtr(imgCSharp, "", "CameraCtrl", "Recoil", 0);
+    g_SightLogicRecoilAddr = ResolveMethodPtr(imgCSharp, "", "Sight_logic", "Recoil", 0);
+    g_SightLogicBulletRecoilAddr = ResolveMethodPtr(imgCSharp, "", "Sight_logic", "BulletRecoil", 0);
+    g_WeaponMotionCtrlApplyRecoilAddr = ResolveMethodPtr(imgCSharp, "", "WeaponMotionCtrl", "ApplyRecoil", 0);
+
+    // NoSpread - resolve SightData getters (functional equivalent)
+    g_GetCurDisAddr = ResolveMethodPtr(imgCSharp, "", "SightData", "get_CurPosDis", 0);
+    g_GetCurBulletTraceRadiusAddr = ResolveMethodPtr(imgCSharp, "", "SightData", "get_BulletTrackRadius", 0);
+
+    // FOV
+    g_GetFOVAddr = ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_fieldOfView", 0);
+
+    // Weakness hit hack
+    g_CartoonDataSetSkilllRayAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "CartoonData", "SetSkilllRay", 1);
+    g_CartoonDataPacketSkillRayAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "CartoonData", "PacketSkillRay", 2);
+    g_SClientHitInfoCtorAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "SClientHitInfo", ".ctor", 10);
+
+    // Log all resolved addresses for debugging
+    printf("[GFR Mod] === Method Resolution Results ===\n");
+    printf("[GFR Mod] GameAssembly base: %p\n", g_GameAssembly);
+    printf("[GFR Mod] il2cpp_method_get_pointer: %s\n", il2cpp_method_get_pointer ? "available" : "NOT available (using fallback)");
+    printf("[GFR Mod] EnableCtrl:       %p\n", g_EnableCtrlAddr);
+    printf("[GFR Mod] Enable:           %p\n", g_EnableAddr);
+    printf("[GFR Mod] ThrowEnableCtrl:  %p\n", g_ThrowEnableCtrlAddr);
+    printf("[GFR Mod] CameraRecoil:     %p\n", g_CameraCtrlRecoilAddr);
+    printf("[GFR Mod] SightRecoil:      %p\n", g_SightLogicRecoilAddr);
+    printf("[GFR Mod] SightBulletRecoil:%p\n", g_SightLogicBulletRecoilAddr);
+    printf("[GFR Mod] WeaponRecoil:     %p\n", g_WeaponMotionCtrlApplyRecoilAddr);
+    printf("[GFR Mod] GetCurDis:        %p\n", g_GetCurDisAddr);
+    printf("[GFR Mod] GetBulletRadius:  %p\n", g_GetCurBulletTraceRadiusAddr);
+    printf("[GFR Mod] GetFOV:           %p\n", g_GetFOVAddr);
+    printf("[GFR Mod] GetPosInjected:   %p\n", g_GetPositionInjected);
+    printf("[GFR Mod] SetPosInjected:   %p\n", g_SetPositionInjected);
+    printf("[GFR Mod] WorldToCamMatrix: %p\n", g_GetWorldToCameraMatrix);
+    printf("[GFR Mod] ProjMatrix:       %p\n", g_GetProjectionMatrix);
+    printf("[GFR Mod] GetWarCash:       %p\n", g_GetWarCash);
+    printf("[GFR Mod] SetWarCash:       %p\n", g_SetWarCash);
+    printf("[GFR Mod] MainCameraCom:    %p\n", g_GetMainCameraComDirect);
+    printf("[GFR Mod] WeaknessSetRay:   %p\n", g_CartoonDataSetSkilllRayAddr);
+    printf("[GFR Mod] WeaknessPacket:   %p\n", g_CartoonDataPacketSkillRayAddr);
+    printf("[GFR Mod] HitInfoCtor:      %p\n", g_SClientHitInfoCtorAddr);
+    printf("[GFR Mod] ================================\n");
 
     // Create weakness strings using il2cpp_string_new
     if (il2cpp_string_new) {
@@ -320,4 +417,11 @@ void* GetBestWeaknessTrans(void* bodyPartCom) {
     }
     
     return nullptr;
+}
+
+bool HookedGetNoCostBullet(void* thisPtr, const void* method) {
+    if (g_InfiniteAmmo) {
+        return true;
+    }
+    return g_OriginalGetNoCostBullet ? g_OriginalGetNoCostBullet(thisPtr, method) : false;
 }

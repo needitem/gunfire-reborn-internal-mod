@@ -24,33 +24,7 @@ constexpr size_t OFFSET_DROPOPCOM = 0xd0;
 constexpr size_t OFFSET_SID = 0x24;
 constexpr size_t OFFSET_FIGHTTYPE = 0x7c;
 
-// RVAs
-constexpr DWORD RVA_RAYCAST_ENABLE_CTRL = 0x01364c90;
-constexpr DWORD RVA_RAYCAST_ENABLE = 0x01365450;
-constexpr DWORD RVA_GET_POSITION_INJECTED = 0x03783270;
-constexpr DWORD RVA_SET_POSITION_INJECTED = 0x03783eb0;
-constexpr DWORD RVA_PHYSICS_LINECAST = 0x036730d0;
-constexpr DWORD RVA_THROW_ENABLE_CTRL = 0x014f0fb0;
-constexpr DWORD RVA_THROW_ENABLE = 0x014f1de0;
-constexpr DWORD RVA_CAMERACTRL_RECOIL = 0x00d8fc90;
-constexpr DWORD RVA_SIGHTLOGIC_RECOIL = 0x00a7ebf0;
-constexpr DWORD RVA_SIGHTLOGIC_BULLETRECOIL = 0x00a7b7a0;
-constexpr DWORD RVA_WEAPONMOTIONCTRL_APPLYRECOIL = 0x00fff630;
-constexpr DWORD RVA_SIGHTLOGIC_GETCURDIS = 0x00a7c3b0;
-constexpr DWORD RVA_SIGHTLOGIC_GETCURBULLETTRACERADIUS = 0x00a7c380;
-constexpr DWORD RVA_CAMERA_GET_FOV = 0x025d1480;
-constexpr DWORD RVA_CAMERA_SET_FOV = 0x025d22c0;
-constexpr DWORD RVA_GET_WARCASH = 0x00b85720;
-constexpr DWORD RVA_SET_WARCASH = 0x00b87d10;
-constexpr DWORD RVA_GET_PLAYERPROP = 0x00c17b40;
-constexpr DWORD RVA_CAMERA_WORLDTOCAMERAMATRIX = 0x025d1d70;
-constexpr DWORD RVA_CAMERA_PROJECTIONMATRIX = 0x025d1860;
-constexpr DWORD RVA_GET_MAINCAMERACOM_DIRECT = 0x00d92a00;
-
-// Weakness hit hack RVAs
-constexpr DWORD RVA_CARTOONDATA_SETSKILLLRAY = 0x01925f80;
-constexpr DWORD RVA_CARTOONDATA_PACKETSKILLRAY = 0x01924bd0;
-constexpr DWORD RVA_SCLIENTHITINFO_CTOR = 0x010dd160;
+// All methods are resolved at runtime via IL2CPP API (no hardcoded RVAs)
 
 // FightType values
 constexpr int FIGHTTYPE_OBSTACLE_NORMAL = 268435713;
@@ -133,6 +107,11 @@ int GetPlayerSpeed(Il2CppObject* localPlayer);
 void SetJumpHeight(Il2CppObject* localPlayer, float height);
 float GetJumpHeight(Il2CppObject* localPlayer);
 void AutoPickup();
+// Infinite ammo hook
+extern void* g_GetNoCostBulletAddr;
+typedef bool (*GetNoCostBullet_t)(void* thisPtr, const void* method);
+extern GetNoCostBullet_t g_OriginalGetNoCostBullet;
+bool HookedGetNoCostBullet(void* thisPtr, const void* method);
 
 // Weakness targeting
 void* GetBestWeaknessTrans(void* bodyPartCom);

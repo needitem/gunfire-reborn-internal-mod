@@ -24,6 +24,9 @@ typedef void (*il2cpp_thread_attach_t)(Il2CppDomain*);
 typedef void (*il2cpp_thread_detach_t)(void*);
 typedef void* (*il2cpp_method_get_pointer_t)(Il2CppMethod*);
 typedef Il2CppObject* (*il2cpp_string_new_t)(const char*);
+typedef Il2CppObject* (*il2cpp_object_new_t)(Il2CppClass*);
+typedef Il2CppClass* (*il2cpp_class_get_parent_t)(Il2CppClass*);
+typedef void (*il2cpp_field_static_set_value_t)(void*, void*);
 
 // Global IL2CPP function pointers
 extern il2cpp_domain_get_t il2cpp_domain_get;
@@ -40,6 +43,9 @@ extern il2cpp_thread_attach_t il2cpp_thread_attach;
 extern il2cpp_thread_detach_t il2cpp_thread_detach;
 extern il2cpp_method_get_pointer_t il2cpp_method_get_pointer;
 extern il2cpp_string_new_t il2cpp_string_new;
+extern il2cpp_object_new_t il2cpp_object_new;
+extern il2cpp_class_get_parent_t il2cpp_class_get_parent;
+extern il2cpp_field_static_set_value_t il2cpp_field_static_set_value;
 
 extern HMODULE g_GameAssembly;
 

@@ -44,12 +44,7 @@ void MainThread(HMODULE hModule) {
     
     printf("[GFR Mod] Ready! Press HOME to open menu\n");
 
-    // Initialize infinite ammo
-    if (g_InfiniteAmmo && g_SetNoCostBullet) {
-        bool enable = true;
-        void* args[] = { &enable };
-        il2cpp_runtime_invoke(g_SetNoCostBullet, nullptr, args, nullptr);
-    }
+    // Infinite ammo handled by HookedGetNoCostBullet hook
 
     DWORD lastSpeedCheck = 0;
 
@@ -60,11 +55,7 @@ void MainThread(HMODULE hModule) {
         
         if (GetAsyncKeyState(VK_F2) & 1) {
             g_InfiniteAmmo = !g_InfiniteAmmo;
-            if (g_SetNoCostBullet) {
-                bool enable = g_InfiniteAmmo;
-                void* args[] = { &enable };
-                il2cpp_runtime_invoke(g_SetNoCostBullet, nullptr, args, nullptr);
-            }
+            // Handled by HookedGetNoCostBullet hook
         }
 
         if (GetAsyncKeyState(VK_F3) & 1) {

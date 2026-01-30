@@ -16,9 +16,14 @@ bool InstallHooks() {
         return false;
     }
 
+    // All hook addresses are resolved in InitGame() via IL2CPP API
+
     // Aimbot hooks
-    g_EnableCtrlAddr = (BYTE*)g_GameAssembly + RVA_RAYCAST_ENABLE_CTRL;
-    g_EnableAddr = (BYTE*)g_GameAssembly + RVA_RAYCAST_ENABLE;
+    if (!g_EnableCtrlAddr || !g_EnableAddr) {
+        printf("[GFR Mod] Failed to resolve aimbot methods\n");
+        MH_Uninitialize();
+        return false;
+    }
 
     if (MH_CreateHook(g_EnableCtrlAddr, (void*)HookedEnableCtrl, (void**)&g_OriginalEnableCtrl) != MH_OK) {
         printf("[GFR Mod] Failed to create EnableCtrl hook\n");
@@ -34,40 +39,50 @@ bool InstallHooks() {
     }
 
     // Skill aimbot hook
-    g_ThrowEnableCtrlAddr = (BYTE*)g_GameAssembly + RVA_THROW_ENABLE_CTRL;
-    MH_CreateHook(g_ThrowEnableCtrlAddr, (void*)HookedThrowEnableCtrl, (void**)&g_OriginalThrowEnableCtrl);
+    if (g_ThrowEnableCtrlAddr)
+        MH_CreateHook(g_ThrowEnableCtrlAddr, (void*)HookedThrowEnableCtrl, (void**)&g_OriginalThrowEnableCtrl);
 
     // NoRecoil hooks
-    g_CameraCtrlRecoilAddr = (BYTE*)g_GameAssembly + RVA_CAMERACTRL_RECOIL;
-    MH_CreateHook(g_CameraCtrlRecoilAddr, (void*)HookedCameraCtrlRecoil, (void**)&g_OriginalCameraCtrlRecoil);
+    if (g_CameraCtrlRecoilAddr)
+        MH_CreateHook(g_CameraCtrlRecoilAddr, (void*)HookedCameraCtrlRecoil, (void**)&g_OriginalCameraCtrlRecoil);
 
-    g_SightLogicRecoilAddr = (BYTE*)g_GameAssembly + RVA_SIGHTLOGIC_RECOIL;
-    MH_CreateHook(g_SightLogicRecoilAddr, (void*)HookedSightLogicRecoil, (void**)&g_OriginalSightLogicRecoil);
+    if (g_SightLogicRecoilAddr)
+        MH_CreateHook(g_SightLogicRecoilAddr, (void*)HookedSightLogicRecoil, (void**)&g_OriginalSightLogicRecoil);
+    else
+        printf("[GFR Mod] Sight_logic.Recoil not found, skipping\n");
 
-    g_SightLogicBulletRecoilAddr = (BYTE*)g_GameAssembly + RVA_SIGHTLOGIC_BULLETRECOIL;
-    MH_CreateHook(g_SightLogicBulletRecoilAddr, (void*)HookedSightLogicBulletRecoil, (void**)&g_OriginalSightLogicBulletRecoil);
+    if (g_SightLogicBulletRecoilAddr)
+        MH_CreateHook(g_SightLogicBulletRecoilAddr, (void*)HookedSightLogicBulletRecoil, (void**)&g_OriginalSightLogicBulletRecoil);
+    else
+        printf("[GFR Mod] Sight_logic.BulletRecoil not found, skipping\n");
 
-    g_WeaponMotionCtrlApplyRecoilAddr = (BYTE*)g_GameAssembly + RVA_WEAPONMOTIONCTRL_APPLYRECOIL;
-    MH_CreateHook(g_WeaponMotionCtrlApplyRecoilAddr, (void*)HookedWeaponMotionCtrlApplyRecoil, (void**)&g_OriginalWeaponMotionCtrlApplyRecoil);
+    if (g_WeaponMotionCtrlApplyRecoilAddr)
+        MH_CreateHook(g_WeaponMotionCtrlApplyRecoilAddr, (void*)HookedWeaponMotionCtrlApplyRecoil, (void**)&g_OriginalWeaponMotionCtrlApplyRecoil);
 
     // NoSpread hooks
-    g_GetCurDisAddr = (BYTE*)g_GameAssembly + RVA_SIGHTLOGIC_GETCURDIS;
-    MH_CreateHook(g_GetCurDisAddr, (void*)HookedGetCurDis, (void**)&g_OriginalGetCurDis);
+    if (g_GetCurDisAddr)
+        MH_CreateHook(g_GetCurDisAddr, (void*)HookedGetCurDis, (void**)&g_OriginalGetCurDis);
 
-    g_GetCurBulletTraceRadiusAddr = (BYTE*)g_GameAssembly + RVA_SIGHTLOGIC_GETCURBULLETTRACERADIUS;
-    MH_CreateHook(g_GetCurBulletTraceRadiusAddr, (void*)HookedGetCurBulletTraceRadius, (void**)&g_OriginalGetCurBulletTraceRadius);
+    if (g_GetCurBulletTraceRadiusAddr)
+        MH_CreateHook(g_GetCurBulletTraceRadiusAddr, (void*)HookedGetCurBulletTraceRadius, (void**)&g_OriginalGetCurBulletTraceRadius);
 
     // Infinite Ammo hook
-    if (il2cpp_method_get_pointer && g_GetCurBullet) {
-        g_GetCurBulletAddr = il2cpp_method_get_pointer(g_GetCurBullet);
+    if (g_GetCurBullet) {
+        g_GetCurBulletAddr = il2cpp_method_get_pointer ? il2cpp_method_get_pointer(g_GetCurBullet) : nullptr;
+        if (!g_GetCurBulletAddr)
+            g_GetCurBulletAddr = *(void**)g_GetCurBullet;  // fallback: MethodInfo.methodPointer at offset 0
         if (g_GetCurBulletAddr) {
             MH_CreateHook(g_GetCurBulletAddr, (void*)HookedGetCurBullet, (void**)&g_OriginalGetCurBullet);
         }
     }
 
     // FOV hook
-    g_GetFOVAddr = (BYTE*)g_GameAssembly + RVA_CAMERA_GET_FOV;
-    MH_CreateHook(g_GetFOVAddr, (void*)HookedGetFOV, (void**)&g_OriginalGetFOV);
+    if (g_GetFOVAddr)
+        MH_CreateHook(g_GetFOVAddr, (void*)HookedGetFOV, (void**)&g_OriginalGetFOV);
+
+    // Infinite ammo hook (GetNoCostBullet → return true)
+    if (g_GetNoCostBulletAddr)
+        MH_CreateHook(g_GetNoCostBulletAddr, (void*)HookedGetNoCostBullet, (void**)&g_OriginalGetNoCostBullet);
 
     // Weakness hit hack hooks
     InstallWeaknessHooks();
@@ -104,6 +119,7 @@ void RemoveHooks() {
     if (g_GetCurBulletTraceRadiusAddr) MH_RemoveHook(g_GetCurBulletTraceRadiusAddr);
     if (g_GetCurBulletAddr) MH_RemoveHook(g_GetCurBulletAddr);
     if (g_GetFOVAddr) MH_RemoveHook(g_GetFOVAddr);
+    if (g_GetNoCostBulletAddr) MH_RemoveHook(g_GetNoCostBulletAddr);
     if (g_PresentAddr) MH_RemoveHook(g_PresentAddr);
     
     // Weakness hooks

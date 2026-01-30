@@ -15,6 +15,9 @@ il2cpp_thread_attach_t il2cpp_thread_attach = nullptr;
 il2cpp_thread_detach_t il2cpp_thread_detach = nullptr;
 il2cpp_method_get_pointer_t il2cpp_method_get_pointer = nullptr;
 il2cpp_string_new_t il2cpp_string_new = nullptr;
+il2cpp_object_new_t il2cpp_object_new = nullptr;
+il2cpp_class_get_parent_t il2cpp_class_get_parent = nullptr;
+il2cpp_field_static_set_value_t il2cpp_field_static_set_value = nullptr;
 
 HMODULE g_GameAssembly = nullptr;
 
@@ -51,6 +54,9 @@ bool InitIL2CPP() {
     il2cpp_thread_detach = (il2cpp_thread_detach_t)GetProcAddress(g_GameAssembly, "il2cpp_thread_detach");
     il2cpp_method_get_pointer = (il2cpp_method_get_pointer_t)GetProcAddress(g_GameAssembly, "il2cpp_method_get_pointer");
     il2cpp_string_new = (il2cpp_string_new_t)GetProcAddress(g_GameAssembly, "il2cpp_string_new");
+    il2cpp_object_new = (il2cpp_object_new_t)GetProcAddress(g_GameAssembly, "il2cpp_object_new");
+    il2cpp_class_get_parent = (il2cpp_class_get_parent_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_parent");
+    il2cpp_field_static_set_value = (il2cpp_field_static_set_value_t)GetProcAddress(g_GameAssembly, "il2cpp_field_static_set_value");
 
     return il2cpp_domain_get && il2cpp_runtime_invoke && il2cpp_thread_attach;
 }

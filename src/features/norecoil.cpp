@@ -1,5 +1,6 @@
 #include "norecoil.h"
 #include "settings.h"
+#include <cstdio>
 
 RecoilFunc_t g_OriginalCameraCtrlRecoil = nullptr;
 RecoilFunc_t g_OriginalSightLogicRecoil = nullptr;
@@ -56,6 +57,11 @@ float HookedGetCurBulletTraceRadius(void* thisPtr) {
 }
 
 int HookedGetCurBullet(void* thisPtr) {
+    static bool logged = false;
+    if (!logged) {
+        printf("[GFR Mod] HookedGetCurBullet called! InfiniteAmmo=%d\n", (int)g_InfiniteAmmo);
+        logged = true;
+    }
     if (g_InfiniteAmmo) {
         return 9999;
     }
