@@ -1,10 +1,121 @@
 #include "esp.h"
 #include "settings.h"
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 std::vector<ESPObject> g_ESPObjects;
 float g_ViewMatrix[16] = {0};
 bool g_ViewMatrixValid = false;
+
+namespace {
+Il2CppMethod* g_ObjectGetNameMethod = nullptr;
+bool g_ObjectGetNameMethodResolved = false;
+
+const char* GetTypeFallbackName(ESPType type) {
+    switch (type) {
+    case ESPType::SecretWall: return "Secret Room Wall";
+    case ESPType::SecretPortal: return "Secret Room Portal";
+    case ESPType::TreasureBox: return "Treasure Box";
+    case ESPType::EventBox: return "Event Box";
+    default: return "Object";
+    }
+}
+
+bool IsNumericLikeName(const char* text) {
+    if (!text || !text[0]) return true;
+
+    // If name is like "12345" or "12345(Clone)" treat as non-meaningful.
+    char buf[128];
+    strncpy_s(buf, sizeof(buf), text, _TRUNCATE);
+    char* clonePos = strstr(buf, "(Clone)");
+    if (clonePos) {
+        *clonePos = '\0';
+    }
+
+    bool hasDigit = false;
+    for (int i = 0; buf[i]; i++) {
+        char c = buf[i];
+        if (c >= '0' && c <= '9') {
+            hasDigit = true;
+            continue;
+        }
+        if (c == ' ' || c == '_' || c == '-' || c == '.') {
+            continue;
+        }
+        return false;
+    }
+    return hasDigit;
+}
+
+void ResolveObjectGetNameMethod() {
+    if (g_ObjectGetNameMethodResolved) return;
+    g_ObjectGetNameMethodResolved = true;
+
+    if (!il2cpp_class_from_name || !il2cpp_class_get_method_from_name) return;
+
+    Il2CppImage* imgCore = FindImage("UnityEngine.CoreModule");
+    if (!imgCore) return;
+
+    Il2CppClass* objectClass = il2cpp_class_from_name(imgCore, "UnityEngine", "Object");
+    if (!objectClass) return;
+
+    g_ObjectGetNameMethod = il2cpp_class_get_method_from_name(objectClass, "get_name", 0);
+}
+
+bool TryIl2CppStringToAnsi(Il2CppObject* strObj, char* outBuf, size_t outBufSize) {
+    if (!strObj || !outBuf || outBufSize < 2) return false;
+    outBuf[0] = '\0';
+
+    __try {
+        // IL2CPP String layout: [object header 0x10] [int32 length @ 0x10] [wchar_t[] chars @ 0x14]
+        int len = *(int*)((char*)strObj + 0x10);
+        if (len <= 0) return false;
+        wchar_t* chars = (wchar_t*)((char*)strObj + 0x14);
+
+        int maxChars = (int)outBufSize - 1;
+        if (len > maxChars) len = maxChars;
+
+        for (int i = 0; i < len; i++) {
+            wchar_t wc = chars[i];
+            if (wc >= 32 && wc <= 126) {
+                outBuf[i] = (char)wc;
+            } else if (wc == 9 || wc == 10 || wc == 13) {
+                outBuf[i] = ' ';
+            } else {
+                outBuf[i] = '?';
+            }
+        }
+        outBuf[len] = '\0';
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        outBuf[0] = '\0';
+        return false;
+    }
+}
+
+std::string BuildESPName(Il2CppObject* obj, ESPType type) {
+    ResolveObjectGetNameMethod();
+    if (!g_ObjectGetNameMethod || !il2cpp_runtime_invoke) {
+        return GetTypeFallbackName(type);
+    }
+
+    void* exception = nullptr;
+    Il2CppObject* nameObj = il2cpp_runtime_invoke(g_ObjectGetNameMethod, obj, nullptr, &exception);
+    if (exception || !nameObj) {
+        return GetTypeFallbackName(type);
+    }
+
+    char nameBuf[128];
+    if (TryIl2CppStringToAnsi(nameObj, nameBuf, sizeof(nameBuf))) {
+        if (nameBuf[0] != '\0' && !IsNumericLikeName(nameBuf)) {
+            return std::string(nameBuf);
+        }
+    }
+
+    return GetTypeFallbackName(type);
+}
+} // namespace
 
 bool WorldToScreen(const Vector3& worldPos, Vector3& screenPos, int screenWidth, int screenHeight) {
     AcquireSRWLockShared(&g_MatrixLock);
@@ -52,7 +163,7 @@ void UpdateViewMatrix() {
         ReleaseSRWLockExclusive(&g_MatrixLock);
         return;
     }
-    
+
     void* camera = g_GetMainCameraComDirect();
     if (!camera) {
         AcquireSRWLockExclusive(&g_MatrixLock);
@@ -60,9 +171,9 @@ void UpdateViewMatrix() {
         ReleaseSRWLockExclusive(&g_MatrixLock);
         return;
     }
-    
+
     Matrix4x4 viewMatrix = {0}, projMatrix = {0};
-    
+
     __try {
         g_GetWorldToCameraMatrix(camera, &viewMatrix);
         g_GetProjectionMatrix(camera, &projMatrix);
@@ -72,7 +183,7 @@ void UpdateViewMatrix() {
         ReleaseSRWLockExclusive(&g_MatrixLock);
         return;
     }
-    
+
     float vpMatrix[16];
     MultiplyMatrix(viewMatrix.m, projMatrix.m, vpMatrix);
     
@@ -146,23 +257,28 @@ void UpdateESPObjects() {
         int fightType = *(int*)((char*)playerObj + OFFSET_FIGHTTYPE);
         int sid = *(int*)((char*)playerObj + OFFSET_SID);
         
-        bool isSecretWall = (fightType == FIGHTTYPE_OBSTACLE_NORMAL && 
+        bool isSecretWall = (fightType == FIGHTTYPE_OBSTACLE_NORMAL &&
             (sid == SID_SECRET_WALL || sid == SID_SECRET_WALL_2 || sid == SID_SECRET_WALL_3 || sid == SID_SECRET_WALL_4 || sid == SID_SECRET_WALL_5));
-        bool isSecretPortal = (fightType == FIGHTTYPE_NPC_TRANSFER && 
+        bool isSecretPortal = (fightType == FIGHTTYPE_NPC_TRANSFER &&
             (sid == SID_SECRET_PORTAL || sid == SID_SECRET_PORTAL_2 || sid == SID_SECRET_PORTAL_3));
-        bool isTreasureBox = (fightType == FIGHTTYPE_NPC_TREASUREBOX || fightType == FIGHTTYPE_NPC_EVENT);
-        
-        if (!isSecretWall && !isSecretPortal && !isTreasureBox) continue;
-        
+        bool isTreasureBox = (fightType == FIGHTTYPE_NPC_TREASUREBOX);
+        bool isEventBox = (fightType == FIGHTTYPE_NPC_EVENT);
+
+        if (!isSecretWall && !isSecretPortal && !isTreasureBox && !isEventBox) continue;
+
         auto gameTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
         if (!gameTrans) continue;
-        
+
         Vector3 pos;
         g_GetPositionInjected(gameTrans, &pos);
-        
+
         ESPObject obj;
         obj.worldPos = pos;
-        obj.isMonster = !isTreasureBox;
+        if (isSecretWall) obj.type = ESPType::SecretWall;
+        else if (isSecretPortal) obj.type = ESPType::SecretPortal;
+        else if (isTreasureBox) obj.type = ESPType::TreasureBox;
+        else obj.type = ESPType::EventBox;
+        obj.displayName = BuildESPName(gameTrans, obj.type);
         
         float dx = pos.x - playerPos.x;
         float dy = pos.y - playerPos.y;

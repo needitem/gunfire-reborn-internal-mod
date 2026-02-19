@@ -9,16 +9,14 @@ bool g_SpeedBoost = true;
 bool g_NoRecoil = true;
 bool g_NoSpread = true;
 bool g_FastBullet = true;
-bool g_FOVEnabled = false;
 bool g_BigRadius = false;
 bool g_ESPEnabled = false;
-bool g_InfiniteGold = false;
 bool g_MenuVisible = false;
 bool g_WeaknessHack = true;
-
-int g_GoldAmount = 99999;
-float g_CustomFOV = 120.0f;
-float g_OriginalFOV = 0.0f;
+bool g_NoCooldown = false;
+bool g_FullMapReveal = false;
+bool g_InfiniteGrenades = false;
+bool g_MaxDefense = false;
 float g_BulletSpeedMultiplier = 100.0f;
 float g_SkillSpeedMultiplier = 10.0f;
 float g_RadiusValue = 999.0f;
@@ -33,6 +31,3 @@ std::atomic<bool> g_HooksInstalled(false);
 SRWLOCK g_TargetLock = SRWLOCK_INIT;
 SRWLOCK g_ESPLock = SRWLOCK_INIT;
 SRWLOCK g_MatrixLock = SRWLOCK_INIT;
-
-// Cached camera
-void* g_CachedCamera = nullptr;

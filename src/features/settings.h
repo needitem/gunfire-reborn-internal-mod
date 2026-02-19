@@ -11,16 +11,14 @@ extern bool g_SpeedBoost;
 extern bool g_NoRecoil;
 extern bool g_NoSpread;
 extern bool g_FastBullet;
-extern bool g_FOVEnabled;
 extern bool g_BigRadius;
 extern bool g_ESPEnabled;
-extern bool g_InfiniteGold;
 extern bool g_MenuVisible;
 extern bool g_WeaknessHack;
-
-extern int g_GoldAmount;
-extern float g_CustomFOV;
-extern float g_OriginalFOV;
+extern bool g_NoCooldown;
+extern bool g_FullMapReveal;
+extern bool g_InfiniteGrenades;
+extern bool g_MaxDefense;
 extern float g_BulletSpeedMultiplier;
 extern float g_SkillSpeedMultiplier;
 extern float g_RadiusValue;
@@ -35,6 +33,3 @@ extern std::atomic<bool> g_HooksInstalled;
 extern SRWLOCK g_TargetLock;
 extern SRWLOCK g_ESPLock;
 extern SRWLOCK g_MatrixLock;
-
-// Cached camera
-extern void* g_CachedCamera;

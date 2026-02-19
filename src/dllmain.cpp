@@ -9,7 +9,12 @@
 #include "hooks/hooks.h"
 #include "render/dx11.h"
 
+static HMODULE g_hModule = nullptr;
+static void* g_AttachedThread = nullptr;
+
 void MainThread(HMODULE hModule) {
+    g_hModule = hModule;
+
     AllocConsole();
     FILE* f; freopen_s(&f, "CONOUT$", "w", stdout);
 
@@ -17,19 +22,23 @@ void MainThread(HMODULE hModule) {
 
     if (!InitIL2CPP()) {
         printf("[GFR Mod] Failed to init IL2CPP\n");
+        if (f) fclose(f);
+        FreeConsole();
         FreeLibraryAndExitThread(hModule, 0);
         return;
     }
 
     if (!InitGame()) {
         printf("[GFR Mod] Failed to init game\n");
+        if (f) fclose(f);
+        FreeConsole();
         FreeLibraryAndExitThread(hModule, 0);
         return;
     }
 
     auto domain = il2cpp_domain_get();
-    if (domain) {
-        il2cpp_thread_attach(domain);
+    if (domain && il2cpp_thread_attach) {
+        g_AttachedThread = il2cpp_thread_attach(domain);
     }
     
     if (!InstallHooks()) {
@@ -41,10 +50,8 @@ void MainThread(HMODULE hModule) {
     if (!InstallDX11Hooks()) {
         printf("[GFR Mod] Warning: DX11 hooks failed, ESP disabled\n");
     }
-    
-    printf("[GFR Mod] Ready! Press HOME to open menu\n");
 
-    // Infinite ammo handled by HookedGetNoCostBullet hook
+    printf("[GFR Mod] Ready! Press HOME to open menu\n");
 
     DWORD lastSpeedCheck = 0;
 
@@ -77,11 +84,9 @@ void MainThread(HMODULE hModule) {
         if (GetAsyncKeyState(VK_F4) & 1) g_NoRecoil = !g_NoRecoil;
         if (GetAsyncKeyState(VK_F5) & 1) g_NoSpread = !g_NoSpread;
         if (GetAsyncKeyState(VK_F6) & 1) g_FastBullet = !g_FastBullet;
-        if (GetAsyncKeyState(VK_F7) & 1) g_SkillAimEnabled = !g_SkillAimEnabled;
-        if (GetAsyncKeyState(VK_F8) & 1) g_FOVEnabled = !g_FOVEnabled;
         if (GetAsyncKeyState(VK_F9) & 1) g_BigRadius = !g_BigRadius;
-        if (GetAsyncKeyState(VK_F10) & 1) g_InfiniteGold = !g_InfiniteGold;
-        if (GetAsyncKeyState(VK_F11) & 1) g_WeaknessHack = !g_WeaknessHack;
+        if (GetAsyncKeyState(VK_F10) & 1) g_WeaknessHack = !g_WeaknessHack;
+        if (GetAsyncKeyState(VK_F11) & 1) g_NoCooldown = !g_NoCooldown;
 
         if (GetAsyncKeyState(VK_MBUTTON) & 1) {
             AutoPickup();
@@ -99,7 +104,7 @@ void MainThread(HMODULE hModule) {
                     SetPlayerSpeed(localPlayer, g_BoostedSpeed);
                 }
             }
-            
+
             // Update aimbot target
             if (g_SilentAimEnabled && g_GetMainCameraCom && g_GetTransform) {
                 auto camera = il2cpp_runtime_invoke(g_GetMainCameraCom, nullptr, nullptr, nullptr);
@@ -127,41 +132,50 @@ void MainThread(HMODULE hModule) {
                 UpdateViewMatrix();
                 UpdateESPObjects();
             }
-            
-            // Infinite gold
-            if (g_InfiniteGold && g_GetPlayerPropFunc && g_SetWarCash && g_GetWarCash && g_MainCtrlField) {
-                int mainCtrl = 0;
-                il2cpp_field_static_get_value(g_MainCtrlField, &mainCtrl);
-                if (mainCtrl != 0) {
-                    void* playerProp = g_GetPlayerPropFunc(mainCtrl);
-                    if (playerProp) {
-                        int currentGold = g_GetWarCash(playerProp);
-                        if (currentGold < g_GoldAmount) {
-                            g_SetWarCash(playerProp, g_GoldAmount);
-                        }
-                    }
-                }
-            }
-            
+
         } __except(EXCEPTION_EXECUTE_HANDLER) {
         }
 
         Sleep(8);
     }
     
-    RemoveHooks();
-    
+    printf("[GFR Mod] Shutting down...\n");
+
+    // Signal shutdown first
+    g_ShuttingDown.store(true, std::memory_order_release);
+    g_Running = false;
+
+    // Restore player speed if modified
     if (g_SpeedBoost) {
         __try {
             auto localPlayer = GetLocalPlayer();
             if (localPlayer && g_OriginalSpeed > 0) {
                 SetPlayerSpeed(localPlayer, g_OriginalSpeed);
+                SetJumpHeight(localPlayer, g_OriginalJumpHeight > 0 ? g_OriginalJumpHeight : 1.0f);
             }
         } __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
-    
-    printf("[GFR Mod] Exiting...\n");
-    Sleep(500);
+
+    // Wait for any pending operations
+    Sleep(100);
+
+    // Remove all hooks (this also cleans up DX11)
+    RemoveHooks();
+
+    // Detach from IL2CPP thread
+    if (g_AttachedThread && il2cpp_thread_detach) {
+        __try {
+            il2cpp_thread_detach(g_AttachedThread);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        g_AttachedThread = nullptr;
+    }
+
+    // Clear all cached pointers
+    g_CachedTarget.valid = false;
+
+    printf("[GFR Mod] Cleanup complete, exiting...\n");
+    Sleep(200);
+
     if (f) fclose(f);
     FreeConsole();
     FreeLibraryAndExitThread(hModule, 0);

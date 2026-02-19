@@ -1,13 +1,22 @@
 #pragma once
 #include "../game/game.h"
+#include <string>
 #include <vector>
+
+enum class ESPType {
+    SecretWall,      // Hidden breakable wall
+    SecretPortal,    // Teleport portal to secret room
+    TreasureBox,     // Treasure chest
+    EventBox         // Event/special box
+};
 
 struct ESPObject {
     Vector3 worldPos;
     Vector3 screenPos;
     bool onScreen;
     float distance;
-    bool isMonster;  // true = secret room (blue), false = treasure box (green)
+    ESPType type;
+    std::string displayName;
 };
 
 extern std::vector<ESPObject> g_ESPObjects;

@@ -30,7 +30,6 @@ set(MOD_SOURCES
     src/features/settings.cpp
     src/features/aimbot.cpp
     src/features/norecoil.cpp
-    src/features/fov.cpp
     src/features/esp.cpp
     src/features/weakness_hack.cpp
     src/hooks/hooks.cpp

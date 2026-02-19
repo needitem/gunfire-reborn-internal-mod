@@ -8,10 +8,12 @@ CachedTarget g_CachedTarget = {0, 0, 0, false};
 EnableCtrl_t g_OriginalEnableCtrl = nullptr;
 Enable_t g_OriginalEnable = nullptr;
 ThrowEnableCtrl_t g_OriginalThrowEnableCtrl = nullptr;
+ParabolaEnableCtrl_t g_OriginalParabolaEnableCtrl = nullptr;
 
 void* g_EnableCtrlAddr = nullptr;
 void* g_EnableAddr = nullptr;
 void* g_ThrowEnableCtrlAddr = nullptr;
+void* g_ParabolaEnableCtrlAddr = nullptr;
 
 void UpdateCachedTarget(Vector3* aimStart, Vector3* aimEnd) {
     if (!g_GetMonsters || !g_GetWeakTrans || !g_GetPosition) return;
@@ -185,28 +187,24 @@ void HookedEnable(void* thisPtr, void* skill, Vector3* start, Vector3* checkstar
 }
 
 void HookedThrowEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* dir, float speed,
-    float radius, Vector3* upForce, void* bounciness, int delayTrigger, bool hitOver, bool hitStaticOver,
-    void* grenade, float liveTime, void* grenadeEffect, float effectLiveTime, float innerRadius,
-    int pierce, bool ignoreMonster, void* hitUnitBounciness, int targettype, int hitovertype,
-    float changeRadius, float maxRadius, bool ignorePetrochemical, int iTriggerBullet, bool ignoreShield,
-    float checkWeaknessAngle, float checkWeaknessDis, bool canPierceWeakness, float hitFallAcc, float verticalThreshold)
+    float radius, Vector3* upForce, void* bounciness, int delayTrigger, bool hitStaticOver,
+    void* grenade, float liveTime, void* trailEffect, float effectLiveTime, float innerRadius,
+    int pierce, float effectScale)
 {
     if (g_ShuttingDown.load(std::memory_order_acquire) || !g_HooksInstalled.load(std::memory_order_acquire)) {
         if (g_OriginalThrowEnableCtrl) {
             g_OriginalThrowEnableCtrl(thisPtr, skill, start, dir, speed, radius, upForce, bounciness,
-                delayTrigger, hitOver, hitStaticOver, grenade, liveTime, grenadeEffect, effectLiveTime,
-                innerRadius, pierce, ignoreMonster, hitUnitBounciness, targettype, hitovertype,
-                changeRadius, maxRadius, ignorePetrochemical, iTriggerBullet, ignoreShield,
-                checkWeaknessAngle, checkWeaknessDis, canPierceWeakness, hitFallAcc, verticalThreshold);
+                delayTrigger, hitStaticOver, grenade, liveTime, trailEffect, effectLiveTime,
+                innerRadius, pierce, effectScale);
         }
         return;
     }
 
     float finalSpeed = speed;
-    Vector3 finalDir = *dir;
-    Vector3 finalUpForce = *upForce;
+    Vector3 finalDir = dir ? *dir : Vector3{0, 0, 0};
+    Vector3 finalUpForce = upForce ? *upForce : Vector3{0, 0, 0};
 
-    if (g_SkillAimEnabled && dir && targettype == 1) {
+    if (g_SkillAimEnabled && start && dir) {
         Vector3 targetPos;
         if (GetCachedTarget(&targetPos)) {
             Vector3 toMonster = {
@@ -228,8 +226,51 @@ void HookedThrowEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* 
     }
 
     g_OriginalThrowEnableCtrl(thisPtr, skill, start, &finalDir, finalSpeed, radius, &finalUpForce, bounciness,
-        delayTrigger, hitOver, hitStaticOver, grenade, liveTime, grenadeEffect, effectLiveTime,
-        innerRadius, pierce, ignoreMonster, hitUnitBounciness, targettype, hitovertype,
-        changeRadius, maxRadius, ignorePetrochemical, iTriggerBullet, ignoreShield,
-        checkWeaknessAngle, checkWeaknessDis, canPierceWeakness, hitFallAcc, verticalThreshold);
+        delayTrigger, hitStaticOver, grenade, liveTime, trailEffect, effectLiveTime,
+        innerRadius, pierce, effectScale);
+}
+
+void HookedParabolaEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* dir, float speed,
+    float radius, Vector3* accelerate, void* bounciness, void* hitUnitBounciness, int delayTrigger,
+    bool hitOver, bool hitStaticOver, int pierce, bool ignoreMonster, int summonID, int summonSID,
+    int targetType, float maxDistance, bool hitHeroOver, bool forceSpeed, float innerRadius,
+    float scale, bool hitMonsterOver)
+{
+    if (g_ShuttingDown.load(std::memory_order_acquire) || !g_HooksInstalled.load(std::memory_order_acquire)) {
+        if (g_OriginalParabolaEnableCtrl) {
+            g_OriginalParabolaEnableCtrl(thisPtr, skill, start, dir, speed, radius, accelerate, bounciness,
+                hitUnitBounciness, delayTrigger, hitOver, hitStaticOver, pierce, ignoreMonster,
+                summonID, summonSID, targetType, maxDistance, hitHeroOver, forceSpeed, innerRadius,
+                scale, hitMonsterOver);
+        }
+        return;
+    }
+
+    float finalSpeed = speed;
+    Vector3 finalDir = dir ? *dir : Vector3{0, 0, 0};
+    Vector3 finalAccelerate = accelerate ? *accelerate : Vector3{0, 0, 0};
+
+    if (g_SkillAimEnabled && start && dir) {
+        Vector3 targetPos;
+        if (GetCachedTarget(&targetPos)) {
+            Vector3 toMonster = {
+                targetPos.x - start->x,
+                targetPos.y - start->y,
+                targetPos.z - start->z
+            };
+            float dist = sqrtf(toMonster.x * toMonster.x + toMonster.y * toMonster.y + toMonster.z * toMonster.z);
+            if (dist > 0.5f) {
+                finalDir.x = toMonster.x / dist;
+                finalDir.y = toMonster.y / dist;
+                finalDir.z = toMonster.z / dist;
+                finalSpeed = speed * g_SkillSpeedMultiplier;
+                finalAccelerate = { 0, 0, 0 };
+            }
+        }
+    }
+
+    g_OriginalParabolaEnableCtrl(thisPtr, skill, start, &finalDir, finalSpeed, radius, &finalAccelerate, bounciness,
+        hitUnitBounciness, delayTrigger, hitOver, hitStaticOver, pierce, ignoreMonster,
+        summonID, summonSID, targetType, maxDistance, hitHeroOver, forceSpeed, innerRadius,
+        scale, hitMonsterOver);
 }

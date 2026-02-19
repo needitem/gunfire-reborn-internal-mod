@@ -1,9 +1,10 @@
 #pragma once
+#include <cstdint>
 #include "../il2cpp/il2cpp.h"
 
 // Vector3 structure
-struct Vector3 { 
-    float x, y, z; 
+struct Vector3 {
+    float x, y, z;
 };
 
 // Matrix4x4 structure
@@ -34,11 +35,11 @@ constexpr int FIGHTTYPE_NPC_EVENT = 33554441;
 constexpr int SID_SECRET_WALL = 1015;
 constexpr int SID_SECRET_WALL_2 = 1016;
 constexpr int SID_SECRET_WALL_3 = 1026;
-constexpr int SID_SECRET_WALL_4 = 1044;  // 3라운드 비밀방
-constexpr int SID_SECRET_WALL_5 = 1045;  // 4스테이지 비밀방
+constexpr int SID_SECRET_WALL_4 = 1044;
+constexpr int SID_SECRET_WALL_5 = 1045;
 constexpr int SID_SECRET_PORTAL = 1017;
 constexpr int SID_SECRET_PORTAL_2 = 1019;
-constexpr int SID_SECRET_PORTAL_3 = 1057;  // 4스테이지 비밀방 포탈
+constexpr int SID_SECRET_PORTAL_3 = 1057;
 
 // Function pointer types
 typedef void (*GetPositionInjected_t)(void* transform, Vector3* ret);
@@ -48,8 +49,6 @@ typedef void* (*GetMainCameraComDirect_t)();
 typedef int (*GetWarCash_t)(void* playerProp);
 typedef void (*SetWarCash_t)(void* playerProp, int value);
 typedef void* (*GetPlayerProp_t)(int pid);
-typedef float (*GetFOV_t)(void* camera);
-typedef void (*SetFOV_t)(void* camera, float fov);
 
 // Cached methods
 extern Il2CppMethod* g_GetMonsters;
@@ -72,8 +71,6 @@ extern Il2CppMethod* g_GetMainCameraCom;
 extern Il2CppMethod* g_ListGetCount;
 extern Il2CppMethod* g_ListGetItem;
 extern Il2CppMethod* g_SetNoCostBullet;
-extern Il2CppMethod* g_GetSpecialWeakTrans;
-extern Il2CppMethod* g_GetWeakTransByTag;
 
 // Cached classes/fields
 extern Il2CppClass* g_NewPlayerManager;
@@ -94,8 +91,6 @@ extern GetMainCameraComDirect_t g_GetMainCameraComDirect;
 extern GetWarCash_t g_GetWarCash;
 extern SetWarCash_t g_SetWarCash;
 extern GetPlayerProp_t g_GetPlayerPropFunc;
-extern GetFOV_t g_GetFOV;
-extern SetFOV_t g_SetFOV;
 
 // Game functions
 bool InitGame();
@@ -107,11 +102,18 @@ int GetPlayerSpeed(Il2CppObject* localPlayer);
 void SetJumpHeight(Il2CppObject* localPlayer, float height);
 float GetJumpHeight(Il2CppObject* localPlayer);
 void AutoPickup();
+
 // Infinite ammo hook
 extern void* g_GetNoCostBulletAddr;
 typedef bool (*GetNoCostBullet_t)(void* thisPtr, const void* method);
 extern GetNoCostBullet_t g_OriginalGetNoCostBullet;
 bool HookedGetNoCostBullet(void* thisPtr, const void* method);
+
+// No Cooldown hook
+extern void* g_ReturnNocdAddr;
+typedef bool (*ReturnNocd_t)(void* thisPtr, const void* method);
+extern ReturnNocd_t g_OriginalReturnNocd;
+bool HookedReturnNocd(void* thisPtr, const void* method);
 
 // Weakness targeting
 void* GetBestWeaknessTrans(void* bodyPartCom);
@@ -119,7 +121,7 @@ void* GetBestWeaknessTrans(void* bodyPartCom);
 // Weakness hit hack types
 typedef void (*CartoonDataSetSkilllRay_t)(void* thisPtr, void* rayHit);
 typedef void (*CartoonDataPacketSkillRay_t)(void* thisPtr, void* lsthit);
-typedef void (*SClientHitInfoCtor_t)(void* thisPtr, int vitid, void* luago, void* tran, bool islife, 
+typedef void (*SClientHitInfoCtor_t)(void* thisPtr, int vitid, void* luago, void* tran, bool islife,
     Vector3* hitPos, Vector3* hitNormal, void* hitTrans, Vector3* hforward, void* hpart, void* spart);
 
 extern CartoonDataSetSkilllRay_t g_OriginalCartoonDataSetSkilllRay;
@@ -132,3 +134,14 @@ extern void* g_SClientHitInfoCtorAddr;
 
 extern void* g_WeaknessString;
 extern void* g_SpecialWeaknessString;
+
+// Reload hook - HeroAttackCtrl.OnReloadBullet
+typedef bool (*OnReloadBullet_t)(void* thisPtr, int weaponid, int reason);
+extern OnReloadBullet_t g_OriginalOnReloadBullet;
+extern void* g_OnReloadBulletAddr;
+bool HookedOnReloadBullet(void* thisPtr, int weaponid, int reason);
+
+// Reload callback used by infinite ammo
+typedef void (*OnReloadBulletCallBack_t)(void* thisPtr, int weaponid, int flag);
+extern OnReloadBulletCallBack_t g_OnReloadBulletCallBack;
+extern void* g_OnReloadBulletCallBackAddr;

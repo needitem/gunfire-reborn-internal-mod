@@ -1,7 +1,6 @@
 #include "game.h"
 #include "../features/norecoil.h"
 #include "../features/aimbot.h"
-#include "../features/fov.h"
 #include "../features/settings.h"
 #include <cstdio>
 
@@ -58,8 +57,6 @@ Il2CppMethod* g_GetMainCameraCom = nullptr;
 Il2CppMethod* g_ListGetCount = nullptr;
 Il2CppMethod* g_ListGetItem = nullptr;
 Il2CppMethod* g_SetNoCostBullet = nullptr;
-Il2CppMethod* g_GetSpecialWeakTrans = nullptr;
-Il2CppMethod* g_GetWeakTransByTag = nullptr;
 
 // Cached classes/fields
 Il2CppClass* g_NewPlayerManager = nullptr;
@@ -80,12 +77,15 @@ GetMainCameraComDirect_t g_GetMainCameraComDirect = nullptr;
 GetWarCash_t g_GetWarCash = nullptr;
 SetWarCash_t g_SetWarCash = nullptr;
 GetPlayerProp_t g_GetPlayerPropFunc = nullptr;
-GetFOV_t g_GetFOV = nullptr;
-SetFOV_t g_SetFOV = nullptr;
 
 // Infinite ammo hook
 void* g_GetNoCostBulletAddr = nullptr;
 GetNoCostBullet_t g_OriginalGetNoCostBullet = nullptr;
+
+
+// No Cooldown hook
+void* g_ReturnNocdAddr = nullptr;
+ReturnNocd_t g_OriginalReturnNocd = nullptr;
 
 // Weakness hit hack
 CartoonDataSetSkilllRay_t g_OriginalCartoonDataSetSkilllRay = nullptr;
@@ -98,6 +98,151 @@ void* g_SClientHitInfoCtorAddr = nullptr;
 
 void* g_WeaknessString = nullptr;
 void* g_SpecialWeaknessString = nullptr;
+
+OnReloadBullet_t g_OriginalOnReloadBullet = nullptr;
+void* g_OnReloadBulletAddr = nullptr;
+
+OnReloadBulletCallBack_t g_OnReloadBulletCallBack = nullptr;
+void* g_OnReloadBulletCallBackAddr = nullptr;
+
+// ========== COMPREHENSIVE METADATA DUMPER ==========
+// Dumps ALL classes, methods, and fields from Assembly-CSharp to a file
+
+static void DumpClassToFile(FILE* f, Il2CppClass* klass, int depth) {
+    if (!klass || !f) return;
+
+    const char* className = il2cpp_class_get_name ? il2cpp_class_get_name(klass) : "???";
+    const char* ns = il2cpp_class_get_namespace ? il2cpp_class_get_namespace(klass) : "";
+
+    // Print class header with namespace
+    if (ns && ns[0])
+        fprintf(f, "%*sclass %s.%s", depth * 2, "", ns, className);
+    else
+        fprintf(f, "%*sclass %s", depth * 2, "", className);
+
+    // Print parent class
+    if (il2cpp_class_get_parent) {
+        Il2CppClass* parent = il2cpp_class_get_parent(klass);
+        if (parent && parent != klass) {
+            const char* parentName = il2cpp_class_get_name ? il2cpp_class_get_name(parent) : "???";
+            fprintf(f, " : %s", parentName);
+        }
+    }
+    fprintf(f, " {\n");
+
+    // Dump fields
+    if (il2cpp_class_get_fields && il2cpp_field_get_name) {
+        void* fiter = nullptr;
+        void* field;
+        while ((field = il2cpp_class_get_fields(klass, &fiter)) != nullptr) {
+            const char* fname = il2cpp_field_get_name(field);
+            if (!fname) continue;
+            const char* ftypeName = "?";
+            if (il2cpp_field_get_type && il2cpp_type_get_name) {
+                void* ftype = il2cpp_field_get_type(field);
+                if (ftype) {
+                    const char* tn = il2cpp_type_get_name(ftype);
+                    if (tn) ftypeName = tn;
+                }
+            }
+            size_t offset = il2cpp_field_get_offset ? il2cpp_field_get_offset(field) : 0;
+            fprintf(f, "%*s  [0x%zx] %s %s;\n", depth * 2, "", offset, ftypeName, fname);
+        }
+    }
+
+    // Dump methods
+    if (il2cpp_class_get_methods && il2cpp_method_get_name) {
+        void* miter = nullptr;
+        void* method;
+        while ((method = il2cpp_class_get_methods(klass, &miter)) != nullptr) {
+            const char* mname = il2cpp_method_get_name(method);
+            if (!mname) continue;
+
+            // Return type
+            const char* retTypeName = "void";
+            if (il2cpp_method_get_return_type && il2cpp_type_get_name) {
+                void* retType = il2cpp_method_get_return_type(method);
+                if (retType) {
+                    const char* rtn = il2cpp_type_get_name(retType);
+                    if (rtn) retTypeName = rtn;
+                }
+            }
+
+            int paramCount = il2cpp_method_get_param_count ? il2cpp_method_get_param_count(method) : 0;
+
+            // Method pointer
+            void* ptr = nullptr;
+            if (il2cpp_method_get_pointer) ptr = il2cpp_method_get_pointer((Il2CppMethod*)method);
+            if (!ptr) ptr = *(void**)method;
+
+            fprintf(f, "%*s  %s %s(", depth * 2, "", retTypeName, mname);
+
+            // Parameter types
+            if (il2cpp_method_get_param && il2cpp_type_get_name && paramCount > 0) {
+                for (int p = 0; p < paramCount; p++) {
+                    void* paramType = il2cpp_method_get_param(method, p);
+                    const char* ptn = "?";
+                    if (paramType) {
+                        const char* tn = il2cpp_type_get_name(paramType);
+                        if (tn) ptn = tn;
+                    }
+                    if (p > 0) fprintf(f, ", ");
+                    fprintf(f, "%s", ptn);
+                }
+            } else if (paramCount > 0) {
+                fprintf(f, "%d params", paramCount);
+            }
+
+            fprintf(f, ") // RVA: 0x%llx\n", ptr ? (unsigned long long)((uintptr_t)ptr - (uintptr_t)g_GameAssembly) : 0ULL);
+        }
+    }
+
+    fprintf(f, "%*s}\n\n", depth * 2, "");
+}
+
+static void DumpAllMetadata() {
+    if (!il2cpp_image_get_class_count || !il2cpp_image_get_class) {
+        printf("[GFR Mod] Metadata dump: missing il2cpp_image_get_class_count/get_class APIs\n");
+        return;
+    }
+
+    auto imgCSharp = FindImage("Assembly-CSharp");
+    if (!imgCSharp) {
+        printf("[GFR Mod] Metadata dump: Assembly-CSharp not found\n");
+        return;
+    }
+
+    // Write dump to game directory
+    const char* dumpPath = "gfr_metadata_dump.txt";
+    FILE* f = fopen(dumpPath, "w");
+    if (!f) {
+        // Try desktop
+        dumpPath = "C:\\Users\\th072\\Desktop\\gfr_metadata_dump.txt";
+        f = fopen(dumpPath, "w");
+    }
+    if (!f) {
+        printf("[GFR Mod] Metadata dump: failed to open output file\n");
+        return;
+    }
+
+    size_t classCount = il2cpp_image_get_class_count(imgCSharp);
+    printf("[GFR Mod] Metadata dump: %zu classes in Assembly-CSharp\n", classCount);
+    fprintf(f, "// GFR Metadata Dump - Assembly-CSharp\n");
+    fprintf(f, "// Total classes: %zu\n\n", classCount);
+
+    for (size_t i = 0; i < classCount; i++) {
+        __try {
+            Il2CppClass* klass = il2cpp_image_get_class(imgCSharp, i);
+            if (!klass) continue;
+            DumpClassToFile(f, klass, 0);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            fprintf(f, "// [ERROR] Exception dumping class index %zu\n\n", i);
+        }
+    }
+
+    fclose(f);
+    printf("[GFR Mod] Metadata dump complete: %s (%zu classes)\n", dumpPath, classCount);
+}
 
 bool InitGame() {
     auto imgCSharp = FindImage("Assembly-CSharp");
@@ -129,7 +274,13 @@ bool InitGame() {
         g_GetJumpHeight = il2cpp_class_get_method_from_name(g_PlayerProp, "get_JumpHeight", 0);
         g_SetJumpHeight = il2cpp_class_get_method_from_name(g_PlayerProp, "set_JumpHeight", 1);
     }
-    
+
+    // Reload completion hook (used by infinite ammo)
+    g_OnReloadBulletAddr = ResolveMethodPtr(imgCSharp, "", "HeroAttackCtrl", "OnReloadBullet", 2);
+    g_OnReloadBulletCallBackAddr = ResolveMethodPtr(imgCSharp, "", "HeroAttackCtrl", "OnReloadBulletCallBack", 2);
+    g_OnReloadBulletCallBack = (OnReloadBulletCallBack_t)g_OnReloadBulletCallBackAddr;
+    printf("[GFR Mod] Reload: OnReloadBullet=%p, Callback=%p\n", g_OnReloadBulletAddr, g_OnReloadBulletCallBackAddr);
+
     if (g_DropManager) {
         g_OneGPU = il2cpp_class_get_method_from_name(g_DropManager, "OneGPU", 0);
         g_StartGPU = il2cpp_class_get_method_from_name(g_DropManager, "StartGPU", 1);
@@ -137,8 +288,6 @@ bool InitGame() {
     
     if (g_OCBodyPart) {
         g_GetWeakTrans = il2cpp_class_get_method_from_name(g_OCBodyPart, "GetWeakTrans", 1);
-        g_GetSpecialWeakTrans = il2cpp_class_get_method_from_name(g_OCBodyPart, "GetSpecialWeakTrans", 0);
-        g_GetWeakTransByTag = il2cpp_class_get_method_from_name(g_OCBodyPart, "GetWeakTransByTag", 1);
     }
     
     if (Transform) {
@@ -161,13 +310,11 @@ bool InitGame() {
         g_PlayerDictField = il2cpp_class_get_field_from_name(g_NewPlayerManager, "PlayerDict");
     }
 
-    // GMStateManager - hook GetNoCostBullet for infinite ammo
+    // GMStateManager - hook GetNoCostBullet for infinite ammo, returnNocd for no cooldown
     g_GMStateManager = il2cpp_class_from_name(imgCSharp, "", "GMStateManager");
     if (g_GMStateManager) {
         g_GetNoCostBulletAddr = ResolveMethodPtr(imgCSharp, "", "GMStateManager", "GetNoCostBullet", 0);
-        printf("[GFR Mod] GetNoCostBullet resolved: %p\n", g_GetNoCostBulletAddr);
-    } else {
-        printf("[GFR Mod] GMStateManager class NOT found\n");
+        g_ReturnNocdAddr = ResolveMethodPtr(imgCSharp, "", "GMStateManager", "returnNocd", 0);
     }
 
     // --- Resolve all method pointers at runtime via IL2CPP API (no hardcoded RVAs) ---
@@ -178,8 +325,6 @@ bool InitGame() {
     g_SetPositionInjected = (SetPositionInjected_t)ResolveMethodPtr(imgCore, "UnityEngine", "Transform", "set_position_Injected", 1);
     g_GetWorldToCameraMatrix = (GetMatrix_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_worldToCameraMatrix_Injected", 1);
     g_GetProjectionMatrix = (GetMatrix_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_projectionMatrix_Injected", 1);
-    g_GetFOV = (GetFOV_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_fieldOfView", 0);
-    g_SetFOV = (SetFOV_t)ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "set_fieldOfView", 1);
 
     // Game function pointers
     g_GetMainCameraComDirect = (GetMainCameraComDirect_t)ResolveMethodPtr(imgCSharp, "", "CameraManager", "get_MainCameraCom", 0);
@@ -192,59 +337,31 @@ bool InitGame() {
     // Aimbot
     g_EnableCtrlAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "RayCastCartoon", "EnableCtrl", 16);
     g_EnableAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "RayCastCartoon", "Enable", 14);
-    // ThrowEnableCtrl: cannot identify correct overload by name alone, disable hook
+    // Skill aim hooks are temporarily disabled.
     g_ThrowEnableCtrlAddr = nullptr;
-    printf("[GFR Mod] ThrowEnableCtrl: skill aimbot disabled (method unresolvable by name)\n");
+    g_ParabolaEnableCtrlAddr = nullptr;
 
-    // NoRecoil
+    // NoRecoil (Sight_logic.Recoil and BulletRecoil removed in game update)
     g_CameraCtrlRecoilAddr = ResolveMethodPtr(imgCSharp, "", "CameraCtrl", "Recoil", 0);
-    g_SightLogicRecoilAddr = ResolveMethodPtr(imgCSharp, "", "Sight_logic", "Recoil", 0);
-    g_SightLogicBulletRecoilAddr = ResolveMethodPtr(imgCSharp, "", "Sight_logic", "BulletRecoil", 0);
     g_WeaponMotionCtrlApplyRecoilAddr = ResolveMethodPtr(imgCSharp, "", "WeaponMotionCtrl", "ApplyRecoil", 0);
 
     // NoSpread - resolve SightData getters (functional equivalent)
     g_GetCurDisAddr = ResolveMethodPtr(imgCSharp, "", "SightData", "get_CurPosDis", 0);
     g_GetCurBulletTraceRadiusAddr = ResolveMethodPtr(imgCSharp, "", "SightData", "get_BulletTrackRadius", 0);
 
-    // FOV
-    g_GetFOVAddr = ResolveMethodPtr(imgCore, "UnityEngine", "Camera", "get_fieldOfView", 0);
-
     // Weakness hit hack
     g_CartoonDataSetSkilllRayAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "CartoonData", "SetSkilllRay", 1);
     g_CartoonDataPacketSkillRayAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "CartoonData", "PacketSkillRay", 2);
     g_SClientHitInfoCtorAddr = ResolveMethodPtr(imgCSharp, "SkillBolt", "SClientHitInfo", ".ctor", 10);
-
-    // Log all resolved addresses for debugging
-    printf("[GFR Mod] === Method Resolution Results ===\n");
-    printf("[GFR Mod] GameAssembly base: %p\n", g_GameAssembly);
-    printf("[GFR Mod] il2cpp_method_get_pointer: %s\n", il2cpp_method_get_pointer ? "available" : "NOT available (using fallback)");
-    printf("[GFR Mod] EnableCtrl:       %p\n", g_EnableCtrlAddr);
-    printf("[GFR Mod] Enable:           %p\n", g_EnableAddr);
-    printf("[GFR Mod] ThrowEnableCtrl:  %p\n", g_ThrowEnableCtrlAddr);
-    printf("[GFR Mod] CameraRecoil:     %p\n", g_CameraCtrlRecoilAddr);
-    printf("[GFR Mod] SightRecoil:      %p\n", g_SightLogicRecoilAddr);
-    printf("[GFR Mod] SightBulletRecoil:%p\n", g_SightLogicBulletRecoilAddr);
-    printf("[GFR Mod] WeaponRecoil:     %p\n", g_WeaponMotionCtrlApplyRecoilAddr);
-    printf("[GFR Mod] GetCurDis:        %p\n", g_GetCurDisAddr);
-    printf("[GFR Mod] GetBulletRadius:  %p\n", g_GetCurBulletTraceRadiusAddr);
-    printf("[GFR Mod] GetFOV:           %p\n", g_GetFOVAddr);
-    printf("[GFR Mod] GetPosInjected:   %p\n", g_GetPositionInjected);
-    printf("[GFR Mod] SetPosInjected:   %p\n", g_SetPositionInjected);
-    printf("[GFR Mod] WorldToCamMatrix: %p\n", g_GetWorldToCameraMatrix);
-    printf("[GFR Mod] ProjMatrix:       %p\n", g_GetProjectionMatrix);
-    printf("[GFR Mod] GetWarCash:       %p\n", g_GetWarCash);
-    printf("[GFR Mod] SetWarCash:       %p\n", g_SetWarCash);
-    printf("[GFR Mod] MainCameraCom:    %p\n", g_GetMainCameraComDirect);
-    printf("[GFR Mod] WeaknessSetRay:   %p\n", g_CartoonDataSetSkilllRayAddr);
-    printf("[GFR Mod] WeaknessPacket:   %p\n", g_CartoonDataPacketSkillRayAddr);
-    printf("[GFR Mod] HitInfoCtor:      %p\n", g_SClientHitInfoCtorAddr);
-    printf("[GFR Mod] ================================\n");
 
     // Create weakness strings using il2cpp_string_new
     if (il2cpp_string_new) {
         g_WeaknessString = il2cpp_string_new("Monster_Weakness");
         g_SpecialWeaknessString = il2cpp_string_new("Monster_SpecialWeakness");
     }
+
+    // Metadata dump disabled (already completed ??see gfr_metadata_dump.txt)
+    // DumpAllMetadata();
 
     return g_GetMonsters && g_GetWeakTrans && g_GetPosition;
 }
@@ -398,24 +515,18 @@ void AutoPickup() {
 }
 
 
-// Get best weakness transform (SpecialWeakness > Monster_Weakness)
+// Get best weakness transform (Monster_Weakness with findNearest=true)
 void* GetBestWeaknessTrans(void* bodyPartCom) {
     if (!bodyPartCom) return nullptr;
-    
-    // 1순위: SpecialWeakness
-    if (g_GetSpecialWeakTrans) {
-        auto specialTrans = il2cpp_runtime_invoke(g_GetSpecialWeakTrans, bodyPartCom, nullptr, nullptr);
-        if (specialTrans) return specialTrans;
-    }
-    
-    // 2순위: Monster_Weakness (GetWeakTrans with findNearest=true)
+
+    // GetWeakTrans with findNearest=true
     if (g_GetWeakTrans) {
         bool findNearest = true;
         void* args[] = { &findNearest };
         auto weakTrans = il2cpp_runtime_invoke(g_GetWeakTrans, bodyPartCom, args, nullptr);
         if (weakTrans) return weakTrans;
     }
-    
+
     return nullptr;
 }
 
@@ -424,4 +535,23 @@ bool HookedGetNoCostBullet(void* thisPtr, const void* method) {
         return true;
     }
     return g_OriginalGetNoCostBullet ? g_OriginalGetNoCostBullet(thisPtr, method) : false;
+}
+
+bool HookedReturnNocd(void* thisPtr, const void* method) {
+    if (g_NoCooldown) {
+        return true;
+    }
+    return g_OriginalReturnNocd ? g_OriginalReturnNocd(thisPtr, method) : false;
+}
+
+// HeroAttackCtrl.OnReloadBullet - integrated into infinite ammo
+bool HookedOnReloadBullet(void* thisPtr, int weaponid, int reason) {
+    if (g_InfiniteAmmo) {
+        // Call callback immediately to complete reload.
+        if (g_OnReloadBulletCallBack) {
+            g_OnReloadBulletCallBack(thisPtr, weaponid, 1);
+        }
+        return true;
+    }
+    return g_OriginalOnReloadBullet ? g_OriginalOnReloadBullet(thisPtr, weaponid, reason) : false;
 }
