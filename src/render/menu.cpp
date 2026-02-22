@@ -18,14 +18,9 @@ void RenderMenu() {
 
     ImGui::Text("=== Combat ===");
     ImGui::Checkbox("Silent Aim [F1]", &g_SilentAimEnabled);
-    ImGui::TextDisabled("Skill Aim [F7] (Temporarily Disabled)");
     ImGui::Checkbox("Fast Bullet [F6]", &g_FastBullet);
     if (g_FastBullet) {
         ImGui::SliderFloat("Bullet Speed", &g_BulletSpeedMultiplier, 1.0f, 200.0f);
-    }
-    ImGui::Checkbox("Big Radius [F9]", &g_BigRadius);
-    if (g_BigRadius) {
-        ImGui::SliderFloat("Radius", &g_RadiusValue, 1.0f, 999.0f);
     }
     ImGui::Checkbox("Weakness Hit [F10]", &g_WeaknessHack);
 

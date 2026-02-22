@@ -18,6 +18,20 @@ il2cpp_string_new_t il2cpp_string_new = nullptr;
 il2cpp_object_new_t il2cpp_object_new = nullptr;
 il2cpp_class_get_parent_t il2cpp_class_get_parent = nullptr;
 il2cpp_field_static_set_value_t il2cpp_field_static_set_value = nullptr;
+il2cpp_class_get_name_t il2cpp_class_get_name = nullptr;
+il2cpp_class_get_namespace_t il2cpp_class_get_namespace = nullptr;
+il2cpp_class_get_fields_t il2cpp_class_get_fields = nullptr;
+il2cpp_field_get_name_t il2cpp_field_get_name = nullptr;
+il2cpp_field_get_type_t il2cpp_field_get_type = nullptr;
+il2cpp_type_get_name_t il2cpp_type_get_name = nullptr;
+il2cpp_field_get_offset_t il2cpp_field_get_offset = nullptr;
+il2cpp_class_get_methods_t il2cpp_class_get_methods = nullptr;
+il2cpp_method_get_name_t il2cpp_method_get_name = nullptr;
+il2cpp_method_get_return_type_t il2cpp_method_get_return_type = nullptr;
+il2cpp_method_get_param_count_t il2cpp_method_get_param_count = nullptr;
+il2cpp_method_get_param_t il2cpp_method_get_param = nullptr;
+il2cpp_image_get_class_count_t il2cpp_image_get_class_count = nullptr;
+il2cpp_image_get_class_t il2cpp_image_get_class = nullptr;
 
 HMODULE g_GameAssembly = nullptr;
 
@@ -57,6 +71,20 @@ bool InitIL2CPP() {
     il2cpp_object_new = (il2cpp_object_new_t)GetProcAddress(g_GameAssembly, "il2cpp_object_new");
     il2cpp_class_get_parent = (il2cpp_class_get_parent_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_parent");
     il2cpp_field_static_set_value = (il2cpp_field_static_set_value_t)GetProcAddress(g_GameAssembly, "il2cpp_field_static_set_value");
+    il2cpp_class_get_name = (il2cpp_class_get_name_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_name");
+    il2cpp_class_get_namespace = (il2cpp_class_get_namespace_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_namespace");
+    il2cpp_class_get_fields = (il2cpp_class_get_fields_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_fields");
+    il2cpp_field_get_name = (il2cpp_field_get_name_t)GetProcAddress(g_GameAssembly, "il2cpp_field_get_name");
+    il2cpp_field_get_type = (il2cpp_field_get_type_t)GetProcAddress(g_GameAssembly, "il2cpp_field_get_type");
+    il2cpp_type_get_name = (il2cpp_type_get_name_t)GetProcAddress(g_GameAssembly, "il2cpp_type_get_name");
+    il2cpp_field_get_offset = (il2cpp_field_get_offset_t)GetProcAddress(g_GameAssembly, "il2cpp_field_get_offset");
+    il2cpp_class_get_methods = (il2cpp_class_get_methods_t)GetProcAddress(g_GameAssembly, "il2cpp_class_get_methods");
+    il2cpp_method_get_name = (il2cpp_method_get_name_t)GetProcAddress(g_GameAssembly, "il2cpp_method_get_name");
+    il2cpp_method_get_return_type = (il2cpp_method_get_return_type_t)GetProcAddress(g_GameAssembly, "il2cpp_method_get_return_type");
+    il2cpp_method_get_param_count = (il2cpp_method_get_param_count_t)GetProcAddress(g_GameAssembly, "il2cpp_method_get_param_count");
+    il2cpp_method_get_param = (il2cpp_method_get_param_t)GetProcAddress(g_GameAssembly, "il2cpp_method_get_param");
+    il2cpp_image_get_class_count = (il2cpp_image_get_class_count_t)GetProcAddress(g_GameAssembly, "il2cpp_image_get_class_count");
+    il2cpp_image_get_class = (il2cpp_image_get_class_t)GetProcAddress(g_GameAssembly, "il2cpp_image_get_class");
 
     return il2cpp_domain_get && il2cpp_runtime_invoke && il2cpp_thread_attach;
 }

@@ -3,13 +3,11 @@
 // Global settings
 bool g_Running = true;
 bool g_SilentAimEnabled = true;
-bool g_SkillAimEnabled = false;
 bool g_InfiniteAmmo = true;
 bool g_SpeedBoost = true;
 bool g_NoRecoil = true;
 bool g_NoSpread = true;
 bool g_FastBullet = true;
-bool g_BigRadius = false;
 bool g_ESPEnabled = false;
 bool g_MenuVisible = false;
 bool g_WeaknessHack = true;
@@ -18,8 +16,6 @@ bool g_FullMapReveal = false;
 bool g_InfiniteGrenades = false;
 bool g_MaxDefense = false;
 float g_BulletSpeedMultiplier = 100.0f;
-float g_SkillSpeedMultiplier = 10.0f;
-float g_RadiusValue = 999.0f;
 int g_OriginalSpeed = 0;
 int g_BoostedSpeed = 1000;
 float g_OriginalJumpHeight = 0.0f;

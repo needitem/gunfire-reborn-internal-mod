@@ -10,7 +10,6 @@ A DLL injection mod for Gunfire Reborn with various gameplay enhancements.
 - **F4** - No Recoil
 - **F5** - No Spread
 - **F6** - Fast Bullet (100x speed)
-- **F7** - Skill Aim (grenade/skill auto-aim)
 - **F8** - FOV Hack (120 degree field of view)
 - **F9** - Weakness Hit (all hits become weak point hits)
 - **ALT** - ESP (secret rooms, treasure boxes)

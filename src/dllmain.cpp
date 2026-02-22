@@ -84,7 +84,6 @@ void MainThread(HMODULE hModule) {
         if (GetAsyncKeyState(VK_F4) & 1) g_NoRecoil = !g_NoRecoil;
         if (GetAsyncKeyState(VK_F5) & 1) g_NoSpread = !g_NoSpread;
         if (GetAsyncKeyState(VK_F6) & 1) g_FastBullet = !g_FastBullet;
-        if (GetAsyncKeyState(VK_F9) & 1) g_BigRadius = !g_BigRadius;
         if (GetAsyncKeyState(VK_F10) & 1) g_WeaknessHack = !g_WeaknessHack;
         if (GetAsyncKeyState(VK_F11) & 1) g_NoCooldown = !g_NoCooldown;
 

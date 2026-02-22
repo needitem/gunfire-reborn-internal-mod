@@ -154,10 +154,9 @@ void HookedEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* shows
     }
 
     float finalSpeed = g_FastBullet ? speed * g_BulletSpeedMultiplier : speed;
-    float finalRadius = g_BigRadius ? g_RadiusValue : radius;
 
     g_OriginalEnableCtrl(thisPtr, skill, start, showstart, end, pierce, distance, finalSpeed,
-        targettype, effect, liveTime, trailEffect, effectLiveTime, finalRadius, flyoverdis, passid, extCheck);
+        targettype, effect, liveTime, trailEffect, effectLiveTime, radius, flyoverdis, passid, extCheck);
 }
 
 void HookedEnable(void* thisPtr, void* skill, Vector3* start, Vector3* checkstart, Vector3* end,
@@ -180,10 +179,9 @@ void HookedEnable(void* thisPtr, void* skill, Vector3* start, Vector3* checkstar
     }
 
     float finalSpeed = g_FastBullet ? speed * g_BulletSpeedMultiplier : speed;
-    float finalRadius = g_BigRadius ? g_RadiusValue : radius;
 
     g_OriginalEnable(thisPtr, skill, start, checkstart, end, pierce, distance, finalSpeed,
-        targettype, effect, liveTime, traileffect, effectlivetime, finalRadius, flyoverdis);
+        targettype, effect, liveTime, traileffect, effectlivetime, radius, flyoverdis);
 }
 
 void HookedThrowEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* dir, float speed,
@@ -203,27 +201,6 @@ void HookedThrowEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector3* 
     float finalSpeed = speed;
     Vector3 finalDir = dir ? *dir : Vector3{0, 0, 0};
     Vector3 finalUpForce = upForce ? *upForce : Vector3{0, 0, 0};
-
-    if (g_SkillAimEnabled && start && dir) {
-        Vector3 targetPos;
-        if (GetCachedTarget(&targetPos)) {
-            Vector3 toMonster = {
-                targetPos.x - start->x,
-                targetPos.y - start->y,
-                targetPos.z - start->z
-            };
-            float dist = sqrtf(toMonster.x*toMonster.x + toMonster.y*toMonster.y + toMonster.z*toMonster.z);
-            if (dist > 0.5f) {
-                finalDir.x = toMonster.x / dist;
-                finalDir.y = toMonster.y / dist;
-                finalDir.z = toMonster.z / dist;
-                finalSpeed = speed * g_SkillSpeedMultiplier;
-                finalUpForce.x = 0;
-                finalUpForce.y = 0;
-                finalUpForce.z = 0;
-            }
-        }
-    }
 
     g_OriginalThrowEnableCtrl(thisPtr, skill, start, &finalDir, finalSpeed, radius, &finalUpForce, bounciness,
         delayTrigger, hitStaticOver, grenade, liveTime, trailEffect, effectLiveTime,
@@ -249,25 +226,6 @@ void HookedParabolaEnableCtrl(void* thisPtr, void* skill, Vector3* start, Vector
     float finalSpeed = speed;
     Vector3 finalDir = dir ? *dir : Vector3{0, 0, 0};
     Vector3 finalAccelerate = accelerate ? *accelerate : Vector3{0, 0, 0};
-
-    if (g_SkillAimEnabled && start && dir) {
-        Vector3 targetPos;
-        if (GetCachedTarget(&targetPos)) {
-            Vector3 toMonster = {
-                targetPos.x - start->x,
-                targetPos.y - start->y,
-                targetPos.z - start->z
-            };
-            float dist = sqrtf(toMonster.x * toMonster.x + toMonster.y * toMonster.y + toMonster.z * toMonster.z);
-            if (dist > 0.5f) {
-                finalDir.x = toMonster.x / dist;
-                finalDir.y = toMonster.y / dist;
-                finalDir.z = toMonster.z / dist;
-                finalSpeed = speed * g_SkillSpeedMultiplier;
-                finalAccelerate = { 0, 0, 0 };
-            }
-        }
-    }
 
     g_OriginalParabolaEnableCtrl(thisPtr, skill, start, &finalDir, finalSpeed, radius, &finalAccelerate, bounciness,
         hitUnitBounciness, delayTrigger, hitOver, hitStaticOver, pierce, ignoreMonster,

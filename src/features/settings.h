@@ -5,13 +5,11 @@
 // Global settings
 extern bool g_Running;
 extern bool g_SilentAimEnabled;
-extern bool g_SkillAimEnabled;
 extern bool g_InfiniteAmmo;
 extern bool g_SpeedBoost;
 extern bool g_NoRecoil;
 extern bool g_NoSpread;
 extern bool g_FastBullet;
-extern bool g_BigRadius;
 extern bool g_ESPEnabled;
 extern bool g_MenuVisible;
 extern bool g_WeaknessHack;
@@ -20,8 +18,6 @@ extern bool g_FullMapReveal;
 extern bool g_InfiniteGrenades;
 extern bool g_MaxDefense;
 extern float g_BulletSpeedMultiplier;
-extern float g_SkillSpeedMultiplier;
-extern float g_RadiusValue;
 extern int g_OriginalSpeed;
 extern int g_BoostedSpeed;
 extern float g_OriginalJumpHeight;

@@ -20,13 +20,27 @@ typedef Il2CppObject* (*il2cpp_runtime_invoke_t)(Il2CppMethod*, void*, void**, v
 typedef void* (*il2cpp_object_unbox_t)(Il2CppObject*);
 typedef void* (*il2cpp_class_get_field_from_name_t)(Il2CppClass*, const char*);
 typedef void (*il2cpp_field_static_get_value_t)(void*, void*);
-typedef void (*il2cpp_thread_attach_t)(Il2CppDomain*);
+typedef void* (*il2cpp_thread_attach_t)(Il2CppDomain*);
 typedef void (*il2cpp_thread_detach_t)(void*);
 typedef void* (*il2cpp_method_get_pointer_t)(Il2CppMethod*);
 typedef Il2CppObject* (*il2cpp_string_new_t)(const char*);
 typedef Il2CppObject* (*il2cpp_object_new_t)(Il2CppClass*);
 typedef Il2CppClass* (*il2cpp_class_get_parent_t)(Il2CppClass*);
 typedef void (*il2cpp_field_static_set_value_t)(void*, void*);
+typedef const char* (*il2cpp_class_get_name_t)(Il2CppClass*);
+typedef const char* (*il2cpp_class_get_namespace_t)(Il2CppClass*);
+typedef void* (*il2cpp_class_get_fields_t)(Il2CppClass*, void**);
+typedef const char* (*il2cpp_field_get_name_t)(void*);
+typedef void* (*il2cpp_field_get_type_t)(void*);
+typedef const char* (*il2cpp_type_get_name_t)(void*);
+typedef int (*il2cpp_field_get_offset_t)(void*);
+typedef void* (*il2cpp_class_get_methods_t)(Il2CppClass*, void**);
+typedef const char* (*il2cpp_method_get_name_t)(void*);
+typedef void* (*il2cpp_method_get_return_type_t)(void*);
+typedef int (*il2cpp_method_get_param_count_t)(void*);
+typedef void* (*il2cpp_method_get_param_t)(void*, int);
+typedef size_t (*il2cpp_image_get_class_count_t)(Il2CppImage*);
+typedef Il2CppClass* (*il2cpp_image_get_class_t)(Il2CppImage*, size_t);
 
 // Global IL2CPP function pointers
 extern il2cpp_domain_get_t il2cpp_domain_get;
@@ -46,6 +60,20 @@ extern il2cpp_string_new_t il2cpp_string_new;
 extern il2cpp_object_new_t il2cpp_object_new;
 extern il2cpp_class_get_parent_t il2cpp_class_get_parent;
 extern il2cpp_field_static_set_value_t il2cpp_field_static_set_value;
+extern il2cpp_class_get_name_t il2cpp_class_get_name;
+extern il2cpp_class_get_namespace_t il2cpp_class_get_namespace;
+extern il2cpp_class_get_fields_t il2cpp_class_get_fields;
+extern il2cpp_field_get_name_t il2cpp_field_get_name;
+extern il2cpp_field_get_type_t il2cpp_field_get_type;
+extern il2cpp_type_get_name_t il2cpp_type_get_name;
+extern il2cpp_field_get_offset_t il2cpp_field_get_offset;
+extern il2cpp_class_get_methods_t il2cpp_class_get_methods;
+extern il2cpp_method_get_name_t il2cpp_method_get_name;
+extern il2cpp_method_get_return_type_t il2cpp_method_get_return_type;
+extern il2cpp_method_get_param_count_t il2cpp_method_get_param_count;
+extern il2cpp_method_get_param_t il2cpp_method_get_param;
+extern il2cpp_image_get_class_count_t il2cpp_image_get_class_count;
+extern il2cpp_image_get_class_t il2cpp_image_get_class;
 
 extern HMODULE g_GameAssembly;
 
