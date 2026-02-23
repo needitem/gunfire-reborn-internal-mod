@@ -7,7 +7,8 @@ enum class ESPType {
     SecretWall,      // Hidden breakable wall
     SecretPortal,    // Teleport portal to secret room
     TreasureBox,     // Treasure chest
-    EventBox         // Event/special box
+    EventBox,        // Event/special box
+    NPC              // Generic NPC (shop/smith/campfire/etc)
 };
 
 struct ESPObject {

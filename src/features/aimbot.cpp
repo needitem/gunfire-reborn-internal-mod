@@ -1,5 +1,7 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <cstdio>
+#include <cstdint>
 #include "aimbot.h"
 #include "settings.h"
 
@@ -14,6 +16,68 @@ void* g_EnableCtrlAddr = nullptr;
 void* g_EnableAddr = nullptr;
 void* g_ThrowEnableCtrlAddr = nullptr;
 void* g_ParabolaEnableCtrlAddr = nullptr;
+
+namespace {
+Il2CppMethod* g_PhysicsLinecast2 = nullptr;
+bool g_PhysicsLinecastResolved = false;
+
+void ResolvePhysicsLinecast() {
+    if (g_PhysicsLinecastResolved) return;
+    g_PhysicsLinecastResolved = true;
+
+    if (!il2cpp_class_from_name || !il2cpp_class_get_method_from_name) return;
+
+    Il2CppImage* imgPhysics = FindImage("UnityEngine.PhysicsModule");
+    if (!imgPhysics) return;
+
+    Il2CppClass* physicsClass = il2cpp_class_from_name(imgPhysics, "UnityEngine", "Physics");
+    if (!physicsClass) return;
+
+    // Use the unambiguous overload: Physics.Linecast(Vector3 start, Vector3 end)
+    g_PhysicsLinecast2 = il2cpp_class_get_method_from_name(physicsClass, "Linecast", 2);
+    if (!g_PhysicsLinecast2) {
+        printf("[GFR Mod] Aimbot LOS: Physics.Linecast(start,end) not found\n");
+    }
+}
+
+bool IsTargetOccluded(const Vector3& from, const Vector3& target) {
+    ResolvePhysicsLinecast();
+    if (!g_PhysicsLinecast2 || !il2cpp_runtime_invoke || !il2cpp_object_unbox) {
+        // Fail-open: if LOS API is unavailable, keep previous behavior.
+        return false;
+    }
+
+    Vector3 delta = {
+        target.x - from.x,
+        target.y - from.y,
+        target.z - from.z
+    };
+    float dist = sqrtf(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    if (dist < 1.0f) return false;
+
+    // Pull endpoint slightly toward camera to avoid hitting target collider itself.
+    float invDist = 1.0f / dist;
+    Vector3 end = {
+        target.x - delta.x * invDist * 0.35f,
+        target.y - delta.y * invDist * 0.35f,
+        target.z - delta.z * invDist * 0.35f
+    };
+
+    void* args[] = { (void*)&from, (void*)&end };
+    void* exception = nullptr;
+    Il2CppObject* hitObj = il2cpp_runtime_invoke(g_PhysicsLinecast2, nullptr, args, &exception);
+    if (exception || !hitObj) {
+        return false;
+    }
+
+    __try {
+        uint8_t hit = *(uint8_t*)il2cpp_object_unbox(hitObj);
+        return hit != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+} // namespace
 
 void UpdateCachedTarget(Vector3* aimStart, Vector3* aimEnd) {
     if (!g_GetMonsters || !g_GetWeakTrans || !g_GetPosition) return;
@@ -96,6 +160,9 @@ void UpdateCachedTarget(Vector3* aimStart, Vector3* aimEnd) {
             float angle = acosf(fmaxf(-1.0f, fminf(1.0f, dot))) * 57.2958f;
             
             if (angle < 60.0f && angle < bestAngle) {
+                if (IsTargetOccluded(*aimStart, *pos)) {
+                    continue;
+                }
                 bestAngle = angle;
                 bestPos = *pos;
                 found = true;

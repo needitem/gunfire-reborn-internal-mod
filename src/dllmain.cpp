@@ -88,7 +88,10 @@ void MainThread(HMODULE hModule) {
         if (GetAsyncKeyState(VK_F11) & 1) g_NoCooldown = !g_NoCooldown;
 
         if (GetAsyncKeyState(VK_MBUTTON) & 1) {
-            AutoPickup();
+            __try {
+                AutoPickup();
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+            }
         }
 
         __try {

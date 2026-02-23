@@ -4,12 +4,31 @@ project(GFRMod)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(GFR_VERSION_FILE "${CMAKE_SOURCE_DIR}/VERSION")
+set(_GFR_VERSION_DEFAULT "v0.0.0-dev")
+if(EXISTS "${GFR_VERSION_FILE}")
+    file(STRINGS "${GFR_VERSION_FILE}" _GFR_VERSION_LINES LIMIT_COUNT 1)
+    if(_GFR_VERSION_LINES)
+        string(STRIP "${_GFR_VERSION_LINES}" _GFR_VERSION_DEFAULT)
+    endif()
+endif()
+set(GFR_MOD_VERSION "${_GFR_VERSION_DEFAULT}" CACHE STRING "Bundled DLL version tag used by injector updater" FORCE)
+set(GFR_GITHUB_OWNER "needitem" CACHE STRING "GitHub owner/user/org for auto-update" FORCE)
+set(GFR_GITHUB_REPO "gunfire-reborn-internal-mod" CACHE STRING "GitHub repo name for auto-update" FORCE)
+set(GFR_GITHUB_ASSET "InternalAimbot.dll" CACHE STRING "Release asset filename to download")
+
 # MinHook
 add_subdirectory(minhook)
 
 # Injector (no console window)
 add_executable(Injector WIN32 src/injector.cpp)
-target_link_libraries(Injector PRIVATE user32)
+target_compile_definitions(Injector PRIVATE
+    GFR_MOD_VERSION="${GFR_MOD_VERSION}"
+    GFR_GITHUB_OWNER="${GFR_GITHUB_OWNER}"
+    GFR_GITHUB_REPO="${GFR_GITHUB_REPO}"
+    GFR_GITHUB_ASSET="${GFR_GITHUB_ASSET}"
+)
+target_link_libraries(Injector PRIVATE user32 winhttp urlmon)
 
 # ImGui sources
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/imgui)

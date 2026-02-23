@@ -461,56 +461,65 @@ float GetJumpHeight(Il2CppObject* localPlayer) {
 void AutoPickup() {
     if (!g_PlayerDictField || !g_MainCtrlField || !g_GetPositionInjected || !g_SetPositionInjected)
         return;
-    
-    int mainCtrl = 0;
-    il2cpp_field_static_get_value(g_MainCtrlField, &mainCtrl);
-    if (mainCtrl == 0) return;
-    
-    Il2CppObject* playerDict = nullptr;
-    il2cpp_field_static_get_value(g_PlayerDictField, &playerDict);
-    if (!playerDict) return;
-    
-    auto entries = *(Il2CppObject**)((char*)playerDict + 0x18);
-    int dictCount = *(int*)((char*)playerDict + 0x20);
-    if (!entries || dictCount <= 0) return;
-    
-    Il2CppObject* playerTrans = nullptr;
-    for (int i = 0; i < dictCount + 50; i++) {
-        char* entryBase = (char*)entries + 0x20 + i * 24;
-        int hashCode = *(int*)entryBase;
-        if (hashCode < 0) continue;
-        
-        int key = *(int*)(entryBase + 0x8);
-        if (key != mainCtrl) continue;
-        
-        auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
-        if (!playerObj) continue;
-        
-        playerTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
-        break;
-    }
-    
-    if (!playerTrans) return;
-    
-    Vector3 playerPos;
-    g_GetPositionInjected(playerTrans, &playerPos);
-    Vector3 targetPos = { playerPos.x, playerPos.y + 0.5f, playerPos.z };
-    
-    for (int i = 0; i < dictCount + 50; i++) {
-        char* entryBase = (char*)entries + 0x20 + i * 24;
-        int hashCode = *(int*)entryBase;
-        if (hashCode < 0) continue;
-        
-        auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
-        if (!playerObj) continue;
-        
-        auto dropCom = *(Il2CppObject**)((char*)playerObj + OFFSET_DROPOPCOM);
-        if (!dropCom) continue;
-        
-        auto gameTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
-        if (!gameTrans) continue;
-        
-        g_SetPositionInjected(gameTrans, &targetPos);
+
+    if (g_ShuttingDown.load(std::memory_order_acquire)) return;
+
+    __try {
+        int mainCtrl = 0;
+        il2cpp_field_static_get_value(g_MainCtrlField, &mainCtrl);
+        if (mainCtrl == 0) return;
+
+        Il2CppObject* playerDict = nullptr;
+        il2cpp_field_static_get_value(g_PlayerDictField, &playerDict);
+        if (!playerDict) return;
+
+        auto entries = *(Il2CppObject**)((char*)playerDict + 0x18);
+        int dictCount = *(int*)((char*)playerDict + 0x20);
+        if (!entries || dictCount <= 0 || dictCount > 500) return;
+
+        int scanCount = dictCount + 50;
+        if (scanCount > 500) scanCount = 500;
+
+        Il2CppObject* playerTrans = nullptr;
+        for (int i = 0; i < scanCount; i++) {
+            char* entryBase = (char*)entries + 0x20 + i * 24;
+            int hashCode = *(int*)entryBase;
+            if (hashCode < 0) continue;
+
+            int key = *(int*)(entryBase + 0x8);
+            if (key != mainCtrl) continue;
+
+            auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
+            if (!playerObj) continue;
+
+            playerTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
+            break;
+        }
+
+        if (!playerTrans) return;
+
+        Vector3 playerPos;
+        g_GetPositionInjected(playerTrans, &playerPos);
+        Vector3 targetPos = { playerPos.x, playerPos.y + 0.5f, playerPos.z };
+
+        for (int i = 0; i < scanCount; i++) {
+            char* entryBase = (char*)entries + 0x20 + i * 24;
+            int hashCode = *(int*)entryBase;
+            if (hashCode < 0) continue;
+
+            auto playerObj = *(Il2CppObject**)(entryBase + 0x10);
+            if (!playerObj) continue;
+
+            auto dropCom = *(Il2CppObject**)((char*)playerObj + OFFSET_DROPOPCOM);
+            if (!dropCom) continue;
+
+            auto gameTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
+            if (!gameTrans) continue;
+
+            g_SetPositionInjected(gameTrans, &targetPos);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        // Scene transition can invalidate object pointers for a few frames.
     }
 }
 

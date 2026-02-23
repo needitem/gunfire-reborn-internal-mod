@@ -11,6 +11,7 @@ extern bool g_NoRecoil;
 extern bool g_NoSpread;
 extern bool g_FastBullet;
 extern bool g_ESPEnabled;
+extern bool g_ShowNPCESP;
 extern bool g_MenuVisible;
 extern bool g_WeaknessHack;
 extern bool g_NoCooldown;

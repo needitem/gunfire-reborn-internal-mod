@@ -1,5 +1,6 @@
 #include "esp.h"
 #include "settings.h"
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -12,12 +13,219 @@ namespace {
 Il2CppMethod* g_ObjectGetNameMethod = nullptr;
 bool g_ObjectGetNameMethodResolved = false;
 
+struct FightTypeRuntime {
+    bool resolvedFromGame = false;
+    bool fallbackLogged = false;
+    DWORD lastResolveAttemptMs = 0;
+    bool hasNpcEvent = false;
+    int npcEvent = 0;
+    std::vector<int> rewardTypes;
+    std::vector<int> serviceNpcTypes;
+} g_FightTypeRuntime;
+
+bool ContainsFightType(const std::vector<int>& values, int fightType) {
+    for (int value : values) {
+        if (value == fightType) return true;
+    }
+    return false;
+}
+
+bool TryReadFightTypeField(Il2CppClass* fightTypeClass, const char* fieldName, int* outValue) {
+    if (!fightTypeClass || !fieldName || !outValue || !il2cpp_class_get_field_from_name || !il2cpp_field_static_get_value) {
+        return false;
+    }
+
+    void* field = il2cpp_class_get_field_from_name(fightTypeClass, fieldName);
+    if (!field) return false;
+
+    __try {
+        int value = 0;
+        il2cpp_field_static_get_value(field, &value);
+        *outValue = value;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+Il2CppClass* FindFightTypeClassByFields(Il2CppImage* imgCSharp) {
+    if (!imgCSharp || !il2cpp_image_get_class_count || !il2cpp_image_get_class || !il2cpp_class_get_field_from_name) {
+        return nullptr;
+    }
+
+    size_t classCount = il2cpp_image_get_class_count(imgCSharp);
+    for (size_t i = 0; i < classCount; i++) {
+        Il2CppClass* klass = nullptr;
+        __try {
+            klass = il2cpp_image_get_class(imgCSharp, i);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            klass = nullptr;
+        }
+        if (!klass) continue;
+
+        // Signature field from FightType enum in current dump.
+        if (il2cpp_class_get_field_from_name(klass, "NWARRIOR_NPC_EVENT")) {
+            return klass;
+        }
+    }
+
+    return nullptr;
+}
+
+void ResolveFightTypesFromGame() {
+    if (g_FightTypeRuntime.resolvedFromGame) return;
+
+    DWORD now = GetTickCount();
+    if (g_FightTypeRuntime.lastResolveAttemptMs != 0 &&
+        (now - g_FightTypeRuntime.lastResolveAttemptMs) < 2000) {
+        return;
+    }
+    g_FightTypeRuntime.lastResolveAttemptMs = now;
+
+    Il2CppImage* imgCSharp = FindImage("Assembly-CSharp");
+    if (!imgCSharp || !il2cpp_class_from_name) {
+        if (!g_FightTypeRuntime.fallbackLogged) {
+            printf("[GFR Mod] FightType resolver: Assembly-CSharp not ready, dynamic mapping deferred\n");
+            g_FightTypeRuntime.fallbackLogged = true;
+        }
+        return;
+    }
+
+    Il2CppClass* fightTypeClass = il2cpp_class_from_name(imgCSharp, "", "FightType");
+    if (!fightTypeClass) {
+        // Some dumps show this enum as ServerDefine.FightType.
+        fightTypeClass = il2cpp_class_from_name(imgCSharp, "ServerDefine", "FightType");
+    }
+    if (!fightTypeClass) {
+        // Some IL2CPP builds expose nested/qualified names in the type name field.
+        fightTypeClass = il2cpp_class_from_name(imgCSharp, "", "ServerDefine.FightType");
+    }
+    if (!fightTypeClass) {
+        fightTypeClass = FindFightTypeClassByFields(imgCSharp);
+    }
+    if (!fightTypeClass) {
+        if (!g_FightTypeRuntime.fallbackLogged) {
+            printf("[GFR Mod] FightType resolver: enum class not found, dynamic mapping deferred\n");
+            g_FightTypeRuntime.fallbackLogged = true;
+        }
+        return;
+    }
+
+    if (il2cpp_class_get_namespace && il2cpp_class_get_name) {
+        const char* ns = il2cpp_class_get_namespace(fightTypeClass);
+        const char* cn = il2cpp_class_get_name(fightTypeClass);
+        printf("[GFR Mod] FightType resolver: using class %s.%s\n",
+            (ns && ns[0]) ? ns : "<global>", cn ? cn : "<unknown>");
+    }
+
+    g_FightTypeRuntime.hasNpcEvent = false;
+    g_FightTypeRuntime.rewardTypes.clear();
+    g_FightTypeRuntime.serviceNpcTypes.clear();
+
+    int resolvedCount = 0;
+
+    int npcEventValue = 0;
+    if (TryReadFightTypeField(fightTypeClass, "NWARRIOR_NPC_EVENT", &npcEventValue)) {
+        resolvedCount++;
+        g_FightTypeRuntime.npcEvent = npcEventValue;
+        g_FightTypeRuntime.hasNpcEvent = true;
+        printf("[GFR Mod] FightType NWARRIOR_NPC_EVENT = 0x%08X (%d)\n", npcEventValue, npcEventValue);
+    }
+
+    const std::array<const char*, 12> rewardNames = {
+        "NWARRIOR_NPC_ITEMBOX",
+        "NWARRIOR_NPC_PASSBOX",
+        "NWARRIOR_NPC_GOLDENCUP",
+        "NWARRIOR_NPC_LOCKEDBOX",
+        "NWARRIOR_NPC_MAGICBOX",
+        "NWARRIOR_NPC_INITBOX",
+        "NWARRIOR_NPC_ROOMCHALLENGE",
+        "NWARRIOR_NPC_LIMITGOLDENCUP",
+        "NWARRIOR_NPC_RAREGOLDENCUP",
+        "NWARRIOR_NPC_EXCHANGEGOLDENCUP",
+        "NWARRIOR_NPC_RELICROLLBOX",
+        "NWARRIOR_NPC_RELICLOTTERY"
+    };
+    for (size_t i = 0; i < rewardNames.size(); i++) {
+        int value = 0;
+        if (TryReadFightTypeField(fightTypeClass, rewardNames[i], &value)) {
+            resolvedCount++;
+            g_FightTypeRuntime.rewardTypes.push_back(value);
+            printf("[GFR Mod] FightType %s = 0x%08X (%d)\n", rewardNames[i], value, value);
+        }
+    }
+
+    const std::array<const char*, 12> serviceNpcNames = {
+        "NWARRIOR_NPC_SHOP",
+        "NWARRIOR_NPC_SMITH",
+        "NWARRIOR_NPC_CAMPFIRE",
+        "NWARRIOR_NPC_BENEDICTION",
+        "NWARRIOR_NPC_GSCASHSHOP",
+        "NWARRIOR_NPC_RELIC",
+        "NWARRIOR_NPC_WEAPONSTORE",
+        "NWARRIOR_NPC_TASKNPC",
+        "NWARRIOR_NPC_PETSHOP",
+        "NWARRIOR_NPC_WANDSHOP",
+        "NWARRIOR_NPC_DICESHOP",
+        "NWARRIOR_NPC_S7SHOP"
+    };
+    for (size_t i = 0; i < serviceNpcNames.size(); i++) {
+        int value = 0;
+        if (TryReadFightTypeField(fightTypeClass, serviceNpcNames[i], &value)) {
+            resolvedCount++;
+            g_FightTypeRuntime.serviceNpcTypes.push_back(value);
+            printf("[GFR Mod] FightType %s = 0x%08X (%d)\n", serviceNpcNames[i], value, value);
+        }
+    }
+
+    g_FightTypeRuntime.resolvedFromGame = (resolvedCount > 0);
+    if (g_FightTypeRuntime.resolvedFromGame) {
+        g_FightTypeRuntime.fallbackLogged = false;
+        printf("[GFR Mod] FightType resolver: loaded %d enum values from game metadata\n", resolvedCount);
+    } else {
+        if (!g_FightTypeRuntime.fallbackLogged) {
+            printf("[GFR Mod] FightType resolver: no enum values loaded, dynamic mapping unavailable\n");
+            g_FightTypeRuntime.fallbackLogged = true;
+        }
+    }
+}
+
+bool IsSecretWallSid(int sid) {
+    return sid == SID_SECRET_WALL ||
+           sid == SID_SECRET_WALL_2 ||
+           sid == SID_SECRET_WALL_3 ||
+           sid == SID_SECRET_WALL_4 ||
+           sid == SID_SECRET_WALL_5;
+}
+
+bool IsSecretPortalSid(int sid) {
+    return sid == SID_SECRET_PORTAL ||
+           sid == SID_SECRET_PORTAL_2 ||
+           sid == SID_SECRET_PORTAL_3;
+}
+
+bool IsRewardNpcFightType(int fightType) {
+    ResolveFightTypesFromGame();
+    return ContainsFightType(g_FightTypeRuntime.rewardTypes, fightType);
+}
+
+bool IsServiceNpcFightType(int fightType) {
+    ResolveFightTypesFromGame();
+    return ContainsFightType(g_FightTypeRuntime.serviceNpcTypes, fightType);
+}
+
+int GetNpcEventFightType() {
+    ResolveFightTypesFromGame();
+    return g_FightTypeRuntime.hasNpcEvent ? g_FightTypeRuntime.npcEvent : -1;
+}
+
 const char* GetTypeFallbackName(ESPType type) {
     switch (type) {
     case ESPType::SecretWall: return "Secret Room Wall";
     case ESPType::SecretPortal: return "Secret Room Portal";
     case ESPType::TreasureBox: return "Treasure Box";
     case ESPType::EventBox: return "Event Box";
+    case ESPType::NPC: return "NPC";
     default: return "Object";
     }
 }
@@ -226,7 +434,6 @@ void UpdateESPObjects() {
     }
     
     std::vector<ESPObject> newObjects;
-    
     Vector3 playerPos = {0, 0, 0};
     for (int i = 0; i < dictCount + 50 && i < 500; i++) {
         char* entryBase = (char*)entries + 0x20 + i * 24;
@@ -257,14 +464,13 @@ void UpdateESPObjects() {
         int fightType = *(int*)((char*)playerObj + OFFSET_FIGHTTYPE);
         int sid = *(int*)((char*)playerObj + OFFSET_SID);
         
-        bool isSecretWall = (fightType == FIGHTTYPE_OBSTACLE_NORMAL &&
-            (sid == SID_SECRET_WALL || sid == SID_SECRET_WALL_2 || sid == SID_SECRET_WALL_3 || sid == SID_SECRET_WALL_4 || sid == SID_SECRET_WALL_5));
-        bool isSecretPortal = (fightType == FIGHTTYPE_NPC_TRANSFER &&
-            (sid == SID_SECRET_PORTAL || sid == SID_SECRET_PORTAL_2 || sid == SID_SECRET_PORTAL_3));
-        bool isTreasureBox = (fightType == FIGHTTYPE_NPC_TREASUREBOX);
-        bool isEventBox = (fightType == FIGHTTYPE_NPC_EVENT);
+        bool isSecretWall = IsSecretWallSid(sid);
+        bool isSecretPortal = IsSecretPortalSid(sid);
+        bool isTreasureBox = IsRewardNpcFightType(fightType);
+        bool isEventBox = (fightType == GetNpcEventFightType());
+        bool isGenericNpc = g_ShowNPCESP && IsServiceNpcFightType(fightType);
 
-        if (!isSecretWall && !isSecretPortal && !isTreasureBox && !isEventBox) continue;
+        if (!isSecretWall && !isSecretPortal && !isTreasureBox && !isEventBox && !isGenericNpc) continue;
 
         auto gameTrans = *(Il2CppObject**)((char*)playerObj + OFFSET_GAMETRANS);
         if (!gameTrans) continue;
@@ -277,7 +483,8 @@ void UpdateESPObjects() {
         if (isSecretWall) obj.type = ESPType::SecretWall;
         else if (isSecretPortal) obj.type = ESPType::SecretPortal;
         else if (isTreasureBox) obj.type = ESPType::TreasureBox;
-        else obj.type = ESPType::EventBox;
+        else if (isEventBox) obj.type = ESPType::EventBox;
+        else obj.type = ESPType::NPC;
         obj.displayName = BuildESPName(gameTrans, obj.type);
         
         float dx = pos.x - playerPos.x;

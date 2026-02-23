@@ -44,7 +44,8 @@ void RenderMenu() {
     ImGui::Separator();
     ImGui::Text("=== ESP ===");
     ImGui::Text("Hold ALT to show ESP");
-    ImGui::Text("Shows: Secret Rooms, Treasure Box");
+    ImGui::Checkbox("Show NPC (Shop/Smith/etc)", &g_ShowNPCESP);
+    ImGui::Text("Shows: Secret Rooms, Treasure/Event Box, NPC");
     AcquireSRWLockShared(&g_ESPLock);
     ImGui::Text("Detected: %zu objects", g_ESPObjects.size());
     ReleaseSRWLockShared(&g_ESPLock);
@@ -120,6 +121,16 @@ static void DrawESPIcon(ImDrawList* drawList, float cx, float cy, float size, ES
             drawList->AddPolyline(star, 10, outlineColor, ImDrawFlags_Closed, 2.0f);
         }
         break;
+
+    case ESPType::NPC:
+        // NPC icon: simple person marker
+        drawList->AddCircleFilled(ImVec2(cx, cy - size * 0.45f), size * 0.35f, color, 18);
+        drawList->AddCircle(ImVec2(cx, cy - size * 0.45f), size * 0.35f, outlineColor, 18, 2.0f);
+        drawList->AddLine(ImVec2(cx, cy - size * 0.1f), ImVec2(cx, cy + size * 0.9f), outlineColor, 2.0f);
+        drawList->AddLine(ImVec2(cx - size * 0.65f, cy + size * 0.2f), ImVec2(cx + size * 0.65f, cy + size * 0.2f), outlineColor, 2.0f);
+        drawList->AddLine(ImVec2(cx, cy + size * 0.9f), ImVec2(cx - size * 0.5f, cy + size * 1.45f), outlineColor, 2.0f);
+        drawList->AddLine(ImVec2(cx, cy + size * 0.9f), ImVec2(cx + size * 0.5f, cy + size * 1.45f), outlineColor, 2.0f);
+        break;
     }
 }
 
@@ -172,6 +183,10 @@ void RenderESPOverlay() {
                 case ESPType::EventBox:
                     fillColor = IM_COL32(255, 165, 0, 200);     // Orange
                     outlineColor = IM_COL32(255, 215, 0, 255);  // Gold
+                    break;
+                case ESPType::NPC:
+                    fillColor = IM_COL32(70, 130, 180, 200);    // Steel Blue
+                    outlineColor = IM_COL32(173, 216, 230, 255); // Light Blue
                     break;
                 default:
                     fillColor = IM_COL32(128, 128, 128, 200);

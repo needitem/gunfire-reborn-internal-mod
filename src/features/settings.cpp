@@ -9,6 +9,7 @@ bool g_NoRecoil = true;
 bool g_NoSpread = true;
 bool g_FastBullet = true;
 bool g_ESPEnabled = false;
+bool g_ShowNPCESP = true;
 bool g_MenuVisible = false;
 bool g_WeaknessHack = true;
 bool g_NoCooldown = false;
