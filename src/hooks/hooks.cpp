@@ -67,6 +67,15 @@ bool InstallHooks() {
     if (g_GetNoCostBulletAddr) {
         MH_CreateHook(g_GetNoCostBulletAddr, (void*)HookedGetNoCostBullet, (void**)&g_OriginalGetNoCostBullet);
     }
+    if (g_SetCurBulletAddr) {
+        MH_CreateHook(g_SetCurBulletAddr, (void*)HookedSetCurBullet, (void**)&g_OriginalSetCurBullet);
+    }
+    if (g_SetClientCurBulletAddr) {
+        MH_CreateHook(g_SetClientCurBulletAddr, (void*)HookedSetClientCurBullet, (void**)&g_OriginalSetClientCurBullet);
+    }
+    if (g_SetCurPFBulletAddr) {
+        MH_CreateHook(g_SetCurPFBulletAddr, (void*)HookedSetCurPFBullet, (void**)&g_OriginalSetCurPFBullet);
+    }
 
     // Instant reload behavior is now integrated into infinite ammo.
     if (g_OnReloadBulletAddr) {
@@ -120,6 +129,9 @@ void RemoveHooks() {
     if (g_GetCurBulletTraceRadiusAddr) MH_RemoveHook(g_GetCurBulletTraceRadiusAddr);
     if (g_GetCurBulletAddr) MH_RemoveHook(g_GetCurBulletAddr);
     if (g_GetNoCostBulletAddr) MH_RemoveHook(g_GetNoCostBulletAddr);
+    if (g_SetCurBulletAddr) MH_RemoveHook(g_SetCurBulletAddr);
+    if (g_SetClientCurBulletAddr) MH_RemoveHook(g_SetClientCurBulletAddr);
+    if (g_SetCurPFBulletAddr) MH_RemoveHook(g_SetCurPFBulletAddr);
     if (g_OnReloadBulletAddr) MH_RemoveHook(g_OnReloadBulletAddr);
     if (g_ReturnNocdAddr) MH_RemoveHook(g_ReturnNocdAddr);
 

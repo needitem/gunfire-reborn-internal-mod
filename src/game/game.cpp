@@ -43,6 +43,9 @@ Il2CppMethod* g_GetMaxBullet = nullptr;
 Il2CppMethod* g_GetCurBullet = nullptr;
 Il2CppMethod* g_SetCurBullet = nullptr;
 Il2CppMethod* g_SetClientCurBullet = nullptr;
+Il2CppMethod* g_GetMaxPFBullet = nullptr;
+Il2CppMethod* g_GetCurPFBullet = nullptr;
+Il2CppMethod* g_SetCurPFBullet = nullptr;
 Il2CppMethod* g_GetSpeed = nullptr;
 Il2CppMethod* g_SetSpeed = nullptr;
 Il2CppMethod* g_GetJumpHeight = nullptr;
@@ -81,6 +84,12 @@ GetPlayerProp_t g_GetPlayerPropFunc = nullptr;
 // Infinite ammo hook
 void* g_GetNoCostBulletAddr = nullptr;
 GetNoCostBullet_t g_OriginalGetNoCostBullet = nullptr;
+void* g_SetCurBulletAddr = nullptr;
+void* g_SetClientCurBulletAddr = nullptr;
+void* g_SetCurPFBulletAddr = nullptr;
+SetBulletValue_t g_OriginalSetCurBullet = nullptr;
+SetBulletValue_t g_OriginalSetClientCurBullet = nullptr;
+SetBulletValue_t g_OriginalSetCurPFBullet = nullptr;
 
 
 // No Cooldown hook
@@ -266,6 +275,12 @@ bool InitGame() {
         g_GetCurBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "get_CurBullet", 0);
         g_SetCurBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "set_CurBullet", 1);
         g_SetClientCurBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "set_ClientCurBullet", 1);
+        g_GetMaxPFBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "get_MaxPFBullet", 0);
+        g_GetCurPFBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "get_CurPFBullet", 0);
+        g_SetCurPFBullet = il2cpp_class_get_method_from_name(g_NewItemProp, "set_CurPFBullet", 1);
+        g_SetCurBulletAddr = ResolveMethodPtr(imgCSharp, "", "NewItemProp", "set_CurBullet", 1);
+        g_SetClientCurBulletAddr = ResolveMethodPtr(imgCSharp, "", "NewItemProp", "set_ClientCurBullet", 1);
+        g_SetCurPFBulletAddr = ResolveMethodPtr(imgCSharp, "", "NewItemProp", "set_CurPFBullet", 1);
     }
     
     if (g_PlayerProp) {
@@ -397,23 +412,32 @@ Il2CppObject* GetCurrentWeaponItemProp(Il2CppObject* localPlayer) {
 }
 
 void RefillAmmo(Il2CppObject* itemProp) {
-    if (!itemProp || !g_GetMaxBullet || !g_GetCurBullet) return;
+    if (!itemProp) return;
 
-    auto maxBulletObj = il2cpp_runtime_invoke(g_GetMaxBullet, itemProp, nullptr, nullptr);
-    if (!maxBulletObj) return;
-    int maxBullet = *(int*)il2cpp_object_unbox(maxBulletObj);
-
-    auto curBulletObj = il2cpp_runtime_invoke(g_GetCurBullet, itemProp, nullptr, nullptr);
-    if (curBulletObj) {
-        int curBullet = *(int*)il2cpp_object_unbox(curBulletObj);
-        if (curBullet >= maxBullet) return;
+    if (g_GetMaxBullet) {
+        auto maxBulletObj = il2cpp_runtime_invoke(g_GetMaxBullet, itemProp, nullptr, nullptr);
+        if (maxBulletObj) {
+            int maxBullet = *(int*)il2cpp_object_unbox(maxBulletObj);
+            if (maxBullet > 0) {
+                void* args[] = { &maxBullet };
+                if (g_SetCurBullet)
+                    il2cpp_runtime_invoke(g_SetCurBullet, itemProp, args, nullptr);
+                if (g_SetClientCurBullet)
+                    il2cpp_runtime_invoke(g_SetClientCurBullet, itemProp, args, nullptr);
+            }
+        }
     }
 
-    void* args[] = { &maxBullet };
-    if (g_SetCurBullet)
-        il2cpp_runtime_invoke(g_SetCurBullet, itemProp, args, nullptr);
-    if (g_SetClientCurBullet)
-        il2cpp_runtime_invoke(g_SetClientCurBullet, itemProp, args, nullptr);
+    if (g_GetMaxPFBullet && g_SetCurPFBullet) {
+        auto maxPFBulletObj = il2cpp_runtime_invoke(g_GetMaxPFBullet, itemProp, nullptr, nullptr);
+        if (maxPFBulletObj) {
+            int maxPFBullet = *(int*)il2cpp_object_unbox(maxPFBulletObj);
+            if (maxPFBullet > 0) {
+                void* pfArgs[] = { &maxPFBullet };
+                il2cpp_runtime_invoke(g_SetCurPFBullet, itemProp, pfArgs, nullptr);
+            }
+        }
+    }
 }
 
 void SetPlayerSpeed(Il2CppObject* localPlayer, int speed) {
@@ -544,6 +568,49 @@ bool HookedGetNoCostBullet(void* thisPtr, const void* method) {
         return true;
     }
     return g_OriginalGetNoCostBullet ? g_OriginalGetNoCostBullet(thisPtr, method) : false;
+}
+
+static int ReadIntProp(Il2CppObject* obj, Il2CppMethod* getter, int fallback) {
+    if (!obj || !getter) return fallback;
+    auto valObj = il2cpp_runtime_invoke(getter, obj, nullptr, nullptr);
+    if (!valObj) return fallback;
+    return *(int*)il2cpp_object_unbox(valObj);
+}
+
+void HookedSetCurBullet(void* thisPtr, int value, const void* method) {
+    if (g_InfiniteAmmo && thisPtr) {
+        int maxBullet = ReadIntProp((Il2CppObject*)thisPtr, g_GetMaxBullet, value);
+        if (maxBullet > 0 && value < maxBullet) {
+            value = maxBullet;
+        }
+    }
+    if (g_OriginalSetCurBullet) {
+        g_OriginalSetCurBullet(thisPtr, value, method);
+    }
+}
+
+void HookedSetClientCurBullet(void* thisPtr, int value, const void* method) {
+    if (g_InfiniteAmmo && thisPtr) {
+        int maxBullet = ReadIntProp((Il2CppObject*)thisPtr, g_GetMaxBullet, value);
+        if (maxBullet > 0 && value < maxBullet) {
+            value = maxBullet;
+        }
+    }
+    if (g_OriginalSetClientCurBullet) {
+        g_OriginalSetClientCurBullet(thisPtr, value, method);
+    }
+}
+
+void HookedSetCurPFBullet(void* thisPtr, int value, const void* method) {
+    if (g_InfiniteAmmo && thisPtr) {
+        int maxPFBullet = ReadIntProp((Il2CppObject*)thisPtr, g_GetMaxPFBullet, value);
+        if (maxPFBullet > 0 && value < maxPFBullet) {
+            value = maxPFBullet;
+        }
+    }
+    if (g_OriginalSetCurPFBullet) {
+        g_OriginalSetCurPFBullet(thisPtr, value, method);
+    }
 }
 
 bool HookedReturnNocd(void* thisPtr, const void* method) {

@@ -89,6 +89,9 @@ extern Il2CppMethod* g_GetMaxBullet;
 extern Il2CppMethod* g_GetCurBullet;
 extern Il2CppMethod* g_SetCurBullet;
 extern Il2CppMethod* g_SetClientCurBullet;
+extern Il2CppMethod* g_GetMaxPFBullet;
+extern Il2CppMethod* g_GetCurPFBullet;
+extern Il2CppMethod* g_SetCurPFBullet;
 extern Il2CppMethod* g_GetSpeed;
 extern Il2CppMethod* g_SetSpeed;
 extern Il2CppMethod* g_GetJumpHeight;
@@ -140,6 +143,18 @@ extern void* g_GetNoCostBulletAddr;
 typedef bool (*GetNoCostBullet_t)(void* thisPtr, const void* method);
 extern GetNoCostBullet_t g_OriginalGetNoCostBullet;
 bool HookedGetNoCostBullet(void* thisPtr, const void* method);
+
+// Bullet setter hooks for stronger infinite ammo enforcement
+extern void* g_SetCurBulletAddr;
+extern void* g_SetClientCurBulletAddr;
+extern void* g_SetCurPFBulletAddr;
+typedef void (*SetBulletValue_t)(void* thisPtr, int value, const void* method);
+extern SetBulletValue_t g_OriginalSetCurBullet;
+extern SetBulletValue_t g_OriginalSetClientCurBullet;
+extern SetBulletValue_t g_OriginalSetCurPFBullet;
+void HookedSetCurBullet(void* thisPtr, int value, const void* method);
+void HookedSetClientCurBullet(void* thisPtr, int value, const void* method);
+void HookedSetCurPFBullet(void* thisPtr, int value, const void* method);
 
 // No Cooldown hook
 extern void* g_ReturnNocdAddr;

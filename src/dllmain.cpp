@@ -107,6 +107,14 @@ void MainThread(HMODULE hModule) {
                 }
             }
 
+            // Keep both normal ammo and perform ammo full while infinite ammo is enabled.
+            if (g_InfiniteAmmo && localPlayer) {
+                auto itemProp = GetCurrentWeaponItemProp(localPlayer);
+                if (itemProp) {
+                    RefillAmmo(itemProp);
+                }
+            }
+
             // Update aimbot target
             if (g_SilentAimEnabled && g_GetMainCameraCom && g_GetTransform) {
                 auto camera = il2cpp_runtime_invoke(g_GetMainCameraCom, nullptr, nullptr, nullptr);
