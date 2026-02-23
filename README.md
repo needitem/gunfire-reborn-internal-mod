@@ -2,19 +2,20 @@
 
 A DLL injection mod for Gunfire Reborn with various gameplay enhancements.
 
-## Features
+## Features (Hotkeys)
 
+- **HOME** - Toggle menu
 - **F1** - Silent Aim (auto-aim to weak points)
-- **F2** - Infinite Ammo (no reload needed)
+- **F2** - Infinite Ammo (primary + perform ammo stay full)
 - **F3** - Speed Boost + Higher Jump
 - **F4** - No Recoil
 - **F5** - No Spread
 - **F6** - Fast Bullet (100x speed)
-- **F8** - FOV Hack (120 degree field of view)
-- **F9** - Weakness Hit (all hits become weak point hits)
-- **ALT** - ESP (secret rooms, treasure boxes)
-- **Mouse Wheel** - Auto Pickup (teleport all items to you)
-- **END** - Exit mod
+- **F10** - Weakness Hit (force weak-point style hit result)
+- **F11** - No Cooldown
+- **ALT (hold)** - ESP overlay (secret walls/portals, boxes, optional NPC)
+- **Middle Mouse Button (Wheel Click)** - Auto Pickup
+- **END** - Unload mod
 
 ## Build
 
@@ -25,16 +26,18 @@ cmake --build build --config Release
 
 ## Usage
 
-1. Build the project
-2. Run `Injector.exe` while Gunfire Reborn is running
-3. DLL will be injected automatically
+1. Build the project.
+2. Place `Injector.exe` and `InternalAimbot.dll` in the same folder.
+3. Run `Injector.exe` while Gunfire Reborn is running.
+4. Injector checks latest GitHub release and updates `InternalAimbot.dll` automatically when a newer tag exists.
+5. DLL is injected automatically after update check.
 
-## Version And Release
+## Version and Release
 
-- Local version is managed in `VERSION` (example: `v1.3.3`).
-- Injector auto-update target is fixed to `needitem/gunfire-reborn-internal-mod` GitHub Releases.
-- Latest release DLL is downloaded when tag version is newer than local version.
-- Release publishing is handled by `.github/workflows/release.yml` on `v*` tags.
+- Local bundled version is managed in `VERSION` and compiled into Injector as `GFR_MOD_VERSION`.
+- Injector stores last downloaded tag in `InternalAimbot.version` next to the executable.
+- Auto-update target is fixed to `needitem/gunfire-reborn-internal-mod` latest release asset `InternalAimbot.dll`.
+- Release publishing is handled by `.github/workflows/release.yml` on `v*` tags and uploads `build/Release/InternalAimbot.dll` and `build/Release/Injector.exe`.
 
 ## Requirements
 
@@ -44,7 +47,7 @@ cmake --build build --config Release
 
 ## Dependencies
 
-- [MinHook](https://github.com/TsudaKageworker/minhook) - API hooking library
+- [MinHook](https://github.com/TsudaKageyu/minhook) - API hooking library
 - [Dear ImGui](https://github.com/ocornut/imgui) - GUI library (optional)
 
 ## Disclaimer
